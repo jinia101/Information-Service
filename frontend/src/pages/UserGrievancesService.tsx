@@ -1,11 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Card,
   CardHeader,
   CardTitle,
   CardDescription,
   CardContent,
-  CardFooter,
 } from "@/components/ui/card";
 import {
   Dialog,
@@ -25,6 +24,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { ServicesMenu } from "@/components/ui/sidebar";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
@@ -35,13 +42,19 @@ import {
   MapPin,
   Copy,
   CheckCircle2,
+  ImagePlus,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
+import { Turnstile } from "@marsidev/react-turnstile";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../types/api";
 import type { Grievance, CreateGrievanceRequest } from "../types/api";
 
 export default function UserGrievancesService() {
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [priorityFilter, setPriorityFilter] = useState("all");
   const [trackingId, setTrackingId] = useState("");
   const [trackingResult, setTrackingResult] = useState<Grievance | null>(null);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
@@ -57,10 +70,15 @@ export default function UserGrievancesService() {
     category: "",
     priority: "medium",
     attachments: [],
+    departmentId: undefined as unknown as number,
+    website: "",
   });
-  const [userGrievances, setUserGrievances] = useState<Grievance[]>([]);
-  const [loading, setLoading] = useState(false);
+  const queryClient = useQueryClient();
   const [submitting, setSubmitting] = useState(false);
+  const [turnstileToken, setTurnstileToken] = useState("");
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const [stats, setStats] = useState({
     totalGrievances: 0,
     newGrievances: 0,
@@ -88,39 +106,37 @@ export default function UserGrievancesService() {
     }
   };
 
+  const { data: deptsData } = useQuery({
+    queryKey: ["publicDepartments"],
+    queryFn: () => apiClient.getPublicDepartments(),
+  });
+
+  const { data: grievancesData, isLoading: loading } = useQuery({
+    queryKey: ["publicGrievances"],
+    queryFn: () => apiClient.getPublicGrievances(),
+  });
+
+  const departments = deptsData?.departments || [];
+  const userGrievances = grievancesData?.grievances || [];
+
+  // Calculate stats
   useEffect(() => {
-    fetchGrievances();
-  }, []);
-
-  const fetchGrievances = async () => {
-    setLoading(true);
-    try {
-      const response = await apiClient.getGrievances();
-      const grievances = response.grievances || [];
-      setUserGrievances(grievances);
-
-      // Calculate stats
+    if (userGrievances.length > 0) {
       setStats({
-        totalGrievances: grievances.length,
-        newGrievances: grievances.filter((g) => g.status === "new").length,
-        pendingGrievances: grievances.filter((g) => g.status === "pending")
-          .length,
-        solvedGrievances: grievances.filter((g) => g.status === "solved")
-          .length,
-        highPriority: grievances.filter(
+        totalGrievances: userGrievances.length,
+        newGrievances: userGrievances.filter((g) => g.status === "new").length,
+        pendingGrievances: userGrievances.filter((g) => g.status === "pending").length,
+        solvedGrievances: userGrievances.filter((g) => g.status === "solved").length,
+        highPriority: userGrievances.filter(
           (g) => g.priority === "high" || g.priority === "urgent",
         ).length,
       });
-    } catch (error) {
-      console.error("Error fetching grievances:", error);
-    } finally {
-      setLoading(false);
     }
-  };
+  }, [userGrievances]);
 
   const handleInputChange = (
     field: keyof CreateGrievanceRequest,
-    value: string | string[],
+    value: string | string[] | number | undefined,
   ) => {
     setFormData((prev) => ({
       ...prev,
@@ -130,10 +146,37 @@ export default function UserGrievancesService() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!formData.departmentId) {
+      return toast({
+        title: "Department Required",
+        description: "Please select a department.",
+        variant: "destructive",
+      });
+    }
+
+    if (!turnstileToken) {
+      return toast({
+        title: "Verification Required",
+        description: "Please complete the CAPTCHA check.",
+        variant: "destructive",
+      });
+    }
+
     setSubmitting(true);
 
     try {
       const response = await apiClient.createGrievance(formData);
+
+      // Upload image if one was selected
+      if (imageFile && response.grievance?.id) {
+        try {
+          await apiClient.uploadGrievanceImage(response.grievance.id, imageFile);
+        } catch (imgErr) {
+          console.error("Image upload failed:", imgErr);
+          // Don't fail the whole submission for image upload failure
+        }
+      }
 
       // Reset form
       setFormData({
@@ -146,15 +189,21 @@ export default function UserGrievancesService() {
         category: "",
         priority: "medium",
         attachments: [],
+        departmentId: undefined as unknown as number,
+        website: "",
       });
+      setImageFile(null);
+      setImagePreview(null);
+      setTrackingResult(null);
+      setTurnstileToken("");
 
-      // Refresh grievance list
-      fetchGrievances();
+      // Invalidate the grievances query to trigger a refetch in the background
+      queryClient.invalidateQueries({ queryKey: ["publicGrievances"] });
 
       // Show success modal with tracking ID
       setNewTrackingId(response.grievance?.trackingId || "");
       setShowSuccessModal(true);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error submitting grievance:", error);
       toast({
         title: "Submission failed",
@@ -177,7 +226,11 @@ export default function UserGrievancesService() {
     } catch (error) {
       console.error("Error tracking grievance:", error);
       setTrackingResult(null);
-      alert("Grievance not found with this tracking ID.");
+      toast({
+        title: "Not Found",
+        description: "Grievance not found with this tracking ID.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -199,7 +252,7 @@ export default function UserGrievancesService() {
   const getStatusColor = (status: string) => {
     switch (status) {
       case "new":
-        return "bg-blue-100 text-blue-800";
+        return "bg-teal-100 text-teal-800";
       case "pending":
         return "bg-orange-100 text-orange-800";
       case "solved":
@@ -209,21 +262,34 @@ export default function UserGrievancesService() {
     }
   };
 
-  const filteredGrievances = userGrievances.filter(
-    (g) =>
+  const filteredGrievances = userGrievances.filter((g) => {
+    const matchesSearch =
       g.subject.toLowerCase().includes(search.toLowerCase()) ||
-      g.description.toLowerCase().includes(search.toLowerCase()),
-  );
+      g.description.toLowerCase().includes(search.toLowerCase()) ||
+      g.trackingId.toLowerCase().includes(search.toLowerCase());
+
+    const matchesStatus = statusFilter === "all" || g.status === statusFilter;
+    const matchesCategory = categoryFilter === "all" || g.category === categoryFilter;
+    const matchesPriority = priorityFilter === "all" || g.priority === priorityFilter;
+
+    return matchesSearch && matchesStatus && matchesCategory && matchesPriority;
+  });
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex flex-col md:flex-row min-h-screen">
       <ServicesMenu />
-      <div className="flex-1 bg-gradient-to-br from-blue-50 via-white to-purple-50">
+      <div className="flex-1 bg-gray-50">
         <div className="container mx-auto px-4 py-8">
-          <h1 className="text-3xl font-bold mb-2">Grievances Service</h1>
-          <p className="text-gray-600 mb-8">
-            Submit your grievances and track their status.
-          </p>
+          <div className="mb-8 p-8 rounded-2xl bg-gradient-to-br from-teal-700 to-emerald-900 text-white shadow-xl relative overflow-hidden">
+            <div className="absolute top-0 right-0 -mr-20 -mt-20 w-64 h-64 rounded-full bg-white opacity-10 blur-3xl"></div>
+            <div className="absolute bottom-0 left-0 -ml-20 -mb-20 w-80 h-80 rounded-full bg-teal-300 opacity-20 blur-3xl"></div>
+            <div className="relative z-10">
+              <h1 className="text-4xl font-extrabold mb-3 tracking-tight">Grievances Service</h1>
+              <p className="text-teal-50 text-lg max-w-xl font-medium">
+                Submit and track your resolutions securely. Our team ensures all feedback passes through proper channels.
+              </p>
+            </div>
+          </div>
 
           {/* Status Cards */}
           <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-8">
@@ -232,10 +298,10 @@ export default function UserGrievancesService() {
                 <CardTitle className="text-sm font-medium">
                   Total Grievances
                 </CardTitle>
-                <FileText className="h-4 w-4 text-blue-600" />
+                <FileText className="h-4 w-4 text-teal-600" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-blue-600">
+                <div className="text-2xl font-bold text-teal-600">
                   {stats.totalGrievances}
                 </div>
                 <p className="text-xs text-muted-foreground">All submissions</p>
@@ -244,10 +310,10 @@ export default function UserGrievancesService() {
             <Card className="hover:shadow-lg transition-shadow">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium">New</CardTitle>
-                <FileText className="h-4 w-4 text-blue-600" />
+                <FileText className="h-4 w-4 text-teal-600" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-blue-600">
+                <div className="text-2xl font-bold text-teal-600">
                   {stats.newGrievances}
                 </div>
                 <p className="text-xs text-muted-foreground">Under review</p>
@@ -308,6 +374,20 @@ export default function UserGrievancesService() {
               </CardHeader>
               <CardContent>
                 <form onSubmit={handleSubmit} className="space-y-4">
+                  {/* Honeypot field - visually hidden to stop basic bots */}
+                  <div style={{ position: "absolute", left: "-9999px" }} aria-hidden="true">
+                    <label htmlFor="website">Leave this field empty</label>
+                    <input
+                      type="text"
+                      id="website"
+                      name="website"
+                      tabIndex={-1}
+                      autoComplete="off"
+                      value={formData.website || ""}
+                      onChange={(e) => handleInputChange("website", e.target.value)}
+                    />
+                  </div>
+
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-medium mb-1">
@@ -423,6 +503,29 @@ export default function UserGrievancesService() {
 
                   <div>
                     <label className="block text-sm font-medium mb-1">
+                      Department *
+                    </label>
+                    <Select
+                      value={formData.departmentId?.toString() || ""}
+                      onValueChange={(value) =>
+                        handleInputChange("departmentId", parseInt(value))
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select department" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {departments.map((dept) => (
+                          <SelectItem key={dept.id} value={dept.id.toString()}>
+                            {dept.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium mb-1">
                       Subject *
                     </label>
                     <Input
@@ -451,13 +554,75 @@ export default function UserGrievancesService() {
                     />
                   </div>
 
-                  <Button
-                    type="submit"
-                    className="w-full bg-blue-600 hover:bg-blue-700"
-                    disabled={submitting}
-                  >
-                    {submitting ? "Submitting..." : "Submit Grievance"}
-                  </Button>
+                  {/* Image Upload */}
+                  <div>
+                    <label className="block text-sm font-medium mb-1">
+                      Attach Image (optional)
+                    </label>
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      ref={imageInputRef}
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          if (file.size > 5 * 1024 * 1024) {
+                            toast({ title: "File too large", description: "Max 5MB allowed", variant: "destructive" });
+                            return;
+                          }
+                          setImageFile(file);
+                          const reader = new FileReader();
+                          reader.onload = (ev) => setImagePreview(ev.target?.result as string);
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                    />
+                    <div className="flex items-center gap-3">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => imageInputRef.current?.click()}
+                        className="flex items-center gap-2"
+                      >
+                        <ImagePlus className="h-4 w-4" />
+                        {imageFile ? "Change Image" : "Choose Image"}
+                      </Button>
+                      {imageFile && (
+                        <span className="text-sm text-gray-600">{imageFile.name}</span>
+                      )}
+                    </div>
+                    {imagePreview && (
+                      <div className="mt-2 relative inline-block">
+                        <img src={imagePreview} alt="Preview" className="max-h-32 rounded-lg border" />
+                        <button
+                          type="button"
+                          onClick={() => { setImageFile(null); setImagePreview(null); if (imageInputRef.current) imageInputRef.current.value = ""; }}
+                          className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs hover:bg-red-600"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    )}
+                    <p className="text-xs text-gray-500 mt-1">JPEG, PNG, or WebP. Max 5MB. Will be compressed.</p>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="flex justify-center my-4">
+                      <Turnstile
+                        siteKey={import.meta.env.VITE_TURNSTILE_SITE_KEY || "1x00000000000000000000AA"}
+                        onSuccess={(token: string) => setTurnstileToken(token)}
+                      />
+                    </div>
+                    <Button
+                      type="submit"
+                      className="w-full bg-teal-600 hover:bg-teal-700"
+                      disabled={submitting || !turnstileToken}
+                    >
+                      {submitting ? "Submitting..." : "Submit Grievance"}
+                    </Button>
+                  </div>
+
                 </form>
               </CardContent>
             </Card>
@@ -545,15 +710,67 @@ export default function UserGrievancesService() {
             <h2 className="text-2xl font-bold mb-4">
               Recent Community Grievances
             </h2>
-            <div className="mb-4">
-              <Input
-                type="text"
-                placeholder="Search grievances..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="max-w-md"
-              />
-            </div>
+
+            <Card className="mb-6">
+              <CardContent className="pt-6">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Search</label>
+                    <Input
+                      type="text"
+                      placeholder="Search subject, description, ID..."
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Status</label>
+                    <Select value={statusFilter} onValueChange={setStatusFilter}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="All Status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Statuses</SelectItem>
+                        <SelectItem value="new">New</SelectItem>
+                        <SelectItem value="pending">Pending</SelectItem>
+                        <SelectItem value="solved">Solved</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Category</label>
+                    <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="All Categories" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Categories</SelectItem>
+                        <SelectItem value="service-related">Service Related</SelectItem>
+                        <SelectItem value="technical">Technical</SelectItem>
+                        <SelectItem value="policy">Policy</SelectItem>
+                        <SelectItem value="infrastructure">Infrastructure</SelectItem>
+                        <SelectItem value="other">Other</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Priority</label>
+                    <Select value={priorityFilter} onValueChange={setPriorityFilter}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="All Priorities" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Priorities</SelectItem>
+                        <SelectItem value="low">Low</SelectItem>
+                        <SelectItem value="medium">Medium</SelectItem>
+                        <SelectItem value="high">High</SelectItem>
+                        <SelectItem value="urgent">Urgent</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
 
             {loading ? (
               <LoadingSpinner
@@ -564,62 +781,62 @@ export default function UserGrievancesService() {
             ) : filteredGrievances.length === 0 ? (
               <Card>
                 <CardContent className="py-8 text-center text-gray-500">
-                  {search
-                    ? `No grievances found matching "${search}".`
+                  {search || statusFilter !== "all" || categoryFilter !== "all" || priorityFilter !== "all"
+                    ? "No grievances found matching your filters."
                     : "No grievances yet."}
                 </CardContent>
               </Card>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {filteredGrievances.slice(0, 9).map((grievance) => (
-                  <Card
-                    key={grievance.id}
-                    className="hover:shadow-lg transition-shadow"
-                  >
-                    <CardHeader>
-                      <CardTitle className="flex items-center justify-between text-lg">
-                        <span className="truncate">{grievance.subject}</span>
-                        <Badge
-                          className={getPriorityColor(grievance.priority)}
-                          variant="secondary"
-                        >
-                          {grievance.priority}
-                        </Badge>
-                      </CardTitle>
-                      <CardDescription>
-                        <div className="flex items-center gap-2">
-                          <span>{grievance.name}</span>
-                          <Badge
-                            className={getStatusColor(grievance.status)}
-                            variant="secondary"
-                          >
-                            {grievance.status}
-                          </Badge>
-                        </div>
-                        <div className="mt-1 text-xs">
-                          <strong>ID:</strong> {grievance.trackingId}
-                        </div>
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <p className="text-sm text-gray-600 line-clamp-3">
-                        {grievance.description}
-                      </p>
-                      {grievance.category && (
-                        <Badge variant="outline" className="mt-2">
-                          {grievance.category}
-                        </Badge>
-                      )}
-                    </CardContent>
-                    <CardFooter>
-                      <div className="text-xs text-gray-500">
-                        Submitted:{" "}
-                        {new Date(grievance.createdAt).toLocaleDateString()}
-                      </div>
-                    </CardFooter>
-                  </Card>
-                ))}
-              </div>
+              <Card>
+                <CardContent className="p-0 overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Tracking ID</TableHead>
+                        <TableHead>Subject</TableHead>
+                        <TableHead>Category</TableHead>
+                        <TableHead>Priority</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Submitted On</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredGrievances.slice(0, 15).map((grievance) => (
+                        <TableRow key={grievance.id}>
+                          <TableCell className="font-mono text-xs">
+                            {grievance.trackingId}
+                          </TableCell>
+                          <TableCell className="max-w-[200px] truncate" title={grievance.subject}>
+                            {grievance.subject}
+                          </TableCell>
+                          <TableCell className="capitalize">
+                            {grievance.category?.replace("-", " ") || "N/A"}
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              className={getPriorityColor(grievance.priority)}
+                              variant="secondary"
+                            >
+                              {grievance.priority}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              className={getStatusColor(grievance.status)}
+                              variant="secondary"
+                            >
+                              {grievance.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-sm text-gray-500">
+                            {new Date(grievance.createdAt).toLocaleDateString()}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
             )}
           </div>
         </div>
@@ -663,11 +880,11 @@ export default function UserGrievancesService() {
               </div>
             </div>
 
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <p className="text-sm text-blue-800">
+            <div className="bg-teal-50 border border-teal-200 rounded-lg p-4">
+              <p className="text-sm text-teal-800">
                 <strong>What's next?</strong>
               </p>
-              <ul className="text-sm text-blue-700 mt-2 space-y-1">
+              <ul className="text-sm text-teal-700 mt-2 space-y-1">
                 <li>
                   • Use your tracking ID to check the status of your grievance
                 </li>

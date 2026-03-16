@@ -5,6 +5,57 @@ export interface Admin {
   email: string;
   name: string;
   role: string;
+  phone?: string;
+  isActive?: boolean;
+  lastLogin?: string;
+  departmentId?: number | null;
+  department?: Department | null;
+  assignedServices?: string[];
+  createdById?: number | null;
+  createdAt: string;
+}
+
+export interface Department {
+  id: number;
+  name: string;
+  code: string;
+  description?: string;
+  contactEmail?: string;
+  contactPhone?: string;
+  isActive: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  _count?: {
+    admins: number;
+    schemeServices: number;
+    certificateServices: number;
+    contactServices: number;
+    grievances: number;
+    feedbacks: number;
+  };
+}
+
+export interface AuditLogEntry {
+  id: number;
+  action: string;
+  entity: string;
+  entityId?: number;
+  details?: any;
+  ipAddress?: string;
+  userAgent?: string;
+  adminId?: number;
+  admin?: { id: number; name: string; email: string };
+  createdAt: string;
+}
+
+export interface NotificationEntry {
+  id: number;
+  adminId: number;
+  title: string;
+  message: string;
+  type: string;
+  isRead: boolean;
+  link?: string;
   createdAt: string;
 }
 
@@ -119,6 +170,11 @@ export interface SchemeService {
   adminId: number;
   contacts: ContactPerson[];
   documents: SupportiveDocument[];
+
+  // Publisher tracking
+  publishedBy?: number;
+  publishedByName?: string;
+  pdfUrl?: string;
 }
 
 export interface CertificateService {
@@ -159,6 +215,11 @@ export interface CertificateService {
   documents: CertificateDocument[];
   processSteps: CertificateProcessStep[];
   eligibilityItems: CertificateEligibility[];
+
+  // Publisher tracking
+  publishedBy?: number;
+  publishedByName?: string;
+  pdfUrl?: string;
 }
 
 export interface ContactService {
@@ -197,6 +258,11 @@ export interface ContactService {
   adminId: number;
   contacts: ContactServiceContact[];
   documents: ContactServiceDocument[];
+
+  // Publisher tracking
+  publishedBy?: number;
+  publishedByName?: string;
+  pdfUrl?: string;
 }
 
 export interface Feedback {
@@ -228,6 +294,8 @@ export interface Grievance {
   priority: "low" | "medium" | "high" | "urgent";
   status: "new" | "pending" | "solved";
   attachments: string[]; // File paths or URLs
+  imageUrl?: string;
+  departmentId?: number;
   createdAt: string;
   updatedAt: string;
 
@@ -489,6 +557,8 @@ export interface CreateFeedbackRequest {
   message: string;
   rating?: number; // 1-5 star rating
   category?: string; // General, Service, Technical, etc.
+  departmentId: number; // Required department
+  website?: string; // Honeypot field for bot spam prevention
 }
 
 export interface UpdateFeedbackRequest {
@@ -507,6 +577,8 @@ export interface CreateGrievanceRequest {
   category?: string; // Service Related, Technical, Policy, etc.
   priority?: "low" | "medium" | "high" | "urgent";
   attachments?: string[]; // File paths or URLs
+  departmentId: number; // Required department
+  website?: string; // Honeypot field for bot spam prevention
 }
 
 export interface UpdateGrievanceRequest {
@@ -518,9 +590,12 @@ export interface UpdateGrievanceRequest {
 
 // API Client Configuration
 export const API_BASE_URL =
-  import.meta.env.MODE === "production"
-    ? "https://your-production-api.com/api"
-    : "http://localhost:3001/api";
+  import.meta.env.VITE_API_BASE_URL ||
+  (import.meta.env.VITE_API_URL
+    ? `${import.meta.env.VITE_API_URL.replace(/\/$/, '')}/api`
+    : import.meta.env.MODE === "production"
+      ? "/api"
+      : "http://localhost:3001/api");
 
 // API Client Class
 export class ApiClient {
@@ -556,28 +631,33 @@ export class ApiClient {
       headers.Authorization = `Bearer ${this.token}`;
     }
 
-    console.log("API Request:", {
-      url,
-      method: options.method || "GET",
-      hasToken: !!this.token,
-      headers,
-      body: options.body,
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30_000); // 30s timeout
 
     const response = await fetch(url, {
       ...options,
       headers,
+      credentials: "include", // Include cookies for refresh token
+      signal: controller.signal,
     });
 
-    console.log("API Response:", {
-      status: response.status,
-      statusText: response.statusText,
-      ok: response.ok,
-    });
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      console.error("API Error:", errorData);
+
+      // Handle token expiry — attempt refresh
+      if (response.status === 401 && errorData.code === "TOKEN_EXPIRED") {
+        const refreshed = await this.attemptTokenRefresh();
+        if (refreshed) {
+          // Retry the original request with new token
+          headers.Authorization = `Bearer ${this.token}`;
+          const retryResponse = await fetch(url, { ...options, headers, credentials: "include" });
+          if (retryResponse.ok) {
+            return retryResponse.json();
+          }
+        }
+      }
 
       // Handle validation errors specifically
       if (response.status === 400 && errorData.errors) {
@@ -603,11 +683,156 @@ export class ApiClient {
     });
   }
 
-  async register(data: RegisterRequest): Promise<AuthResponse> {
+  async register(data: RegisterRequest & { role?: string; departmentId?: number; phone?: string; assignedServices?: string[] }): Promise<AuthResponse> {
     return this.makeRequest<AuthResponse>("/auth/register", {
       method: "POST",
       body: JSON.stringify(data),
     });
+  }
+
+  async refreshToken(): Promise<{ token: string; admin: Admin }> {
+    return this.makeRequest<{ token: string; admin: Admin }>("/auth/refresh", {
+      method: "POST",
+    });
+  }
+
+  async logout(): Promise<void> {
+    await this.makeRequest<any>("/auth/logout", { method: "POST" }).catch(() => { });
+    this.clearToken();
+  }
+
+  async changePassword(currentPassword: string, newPassword: string): Promise<any> {
+    return this.makeRequest<any>("/auth/change-password", {
+      method: "PUT",
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+  }
+
+  private async attemptTokenRefresh(): Promise<boolean> {
+    try {
+      const result = await fetch(`${this.baseURL}/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+      });
+      if (result.ok) {
+        const data = await result.json();
+        if (data.token) {
+          this.setToken(data.token);
+          return true;
+        }
+      }
+    } catch {
+      // Refresh failed
+    }
+    return false;
+  }
+
+  // ─── Department Methods ───
+  async getDepartments(): Promise<{ departments: Department[] }> {
+    return this.makeRequest<{ departments: Department[] }>("/departments");
+  }
+
+  async getDepartment(id: number): Promise<{ department: Department }> {
+    return this.makeRequest<{ department: Department }>(`/departments/${id}`);
+  }
+
+  async createDepartment(data: { name: string; code: string; description?: string; contactEmail?: string; contactPhone?: string }): Promise<{ department: Department }> {
+    return this.makeRequest<{ department: Department }>("/departments", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateDepartment(id: number, data: Partial<Department>): Promise<{ department: Department }> {
+    return this.makeRequest<{ department: Department }>(`/departments/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async toggleDepartment(id: number): Promise<{ department: Department }> {
+    return this.makeRequest<{ department: Department }>(`/departments/${id}/toggle`, {
+      method: "PATCH",
+    });
+  }
+
+  async deleteDepartment(id: number): Promise<any> {
+    return this.makeRequest<any>(`/departments/${id}`, { method: "DELETE" });
+  }
+
+  async getPublicDepartments(): Promise<{ departments: Department[] }> {
+    return this.makeRequest<{ departments: Department[] }>("/departments/public/list");
+  }
+
+  async getDepartmentStats(id: number): Promise<{ stats: any }> {
+    return this.makeRequest<{ stats: any }>(`/departments/${id}/stats`);
+  }
+
+  // ─── Admin Management Methods ───
+  async getAdmins(params?: { page?: number; limit?: number; }): Promise<{ admins: Admin[]; pagination?: any }> {
+    const queryParams = new URLSearchParams();
+    if (params?.page) queryParams.append("page", params.page.toString());
+    if (params?.limit) queryParams.append("limit", params.limit.toString());
+
+    const query = queryParams.toString();
+    return this.makeRequest<{ admins: Admin[]; pagination?: any }>(`/admin${query ? `?${query}` : ""}`);
+  }
+
+  async getAdmin(id: number): Promise<{ admin: Admin }> {
+    return this.makeRequest<{ admin: Admin }>(`/admin/${id}`);
+  }
+
+  async updateAdmin(id: number, data: Partial<Admin>): Promise<{ admin: Admin }> {
+    return this.makeRequest<{ admin: Admin }>(`/admin/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async toggleAdmin(id: number): Promise<{ admin: Admin }> {
+    return this.makeRequest<{ admin: Admin }>(`/admin/${id}/toggle`, {
+      method: "PATCH",
+    });
+  }
+
+  async deleteAdmin(id: number): Promise<any> {
+    return this.makeRequest<any>(`/admin/${id}`, { method: "DELETE" });
+  }
+
+  async unlockAdmin(id: number): Promise<any> {
+    return this.makeRequest<any>(`/admin/${id}/unlock`, { method: "PATCH" });
+  }
+
+  async resetAdminPassword(id: number, newPassword: string): Promise<any> {
+    return this.makeRequest<any>(`/admin/${id}/reset-password`, {
+      method: "PATCH",
+      body: JSON.stringify({ newPassword }),
+    });
+  }
+
+  // ─── Audit Log Methods ───
+  async getAuditLogs(params?: { page?: number; limit?: number; action?: string; entity?: string }): Promise<{ logs: AuditLogEntry[]; pagination: any }> {
+    const queryParams = new URLSearchParams();
+    if (params?.page) queryParams.append("page", params.page.toString());
+    if (params?.limit) queryParams.append("limit", params.limit.toString());
+    if (params?.action) queryParams.append("action", params.action);
+    if (params?.entity) queryParams.append("entity", params.entity);
+    const query = queryParams.toString();
+    return this.makeRequest<{ logs: AuditLogEntry[]; pagination: any }>(`/audit-logs${query ? `?${query}` : ""}`);
+  }
+
+  // ─── Notification Methods ───
+  async getNotifications(page = 1): Promise<{ notifications: NotificationEntry[]; unreadCount: number; pagination: any }> {
+    return this.makeRequest<{ notifications: NotificationEntry[]; unreadCount: number; pagination: any }>(`/notifications?page=${page}`);
+  }
+
+  async markNotificationRead(id: number): Promise<any> {
+    return this.makeRequest<any>(`/notifications/${id}/read`, { method: "PATCH" });
+  }
+
+  async markAllNotificationsRead(): Promise<any> {
+    return this.makeRequest<any>("/notifications/read-all", { method: "PATCH" });
   }
 
   async getProfile(): Promise<AuthResponse> {
@@ -801,6 +1026,73 @@ export class ApiClient {
     );
   }
 
+  // Add office to contact service (new dedicated endpoint)
+  async addOfficeToContactService(
+    serviceId: number,
+    data: { officeName: string; level: string; pincode?: string; district?: string; block?: string; subdivision?: string },
+  ): Promise<{ success: boolean; office: any; message?: string }> {
+    return this.makeRequest<{ success: boolean; office: any; message?: string }>(
+      `/contact-services/${serviceId}/offices`,
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      },
+    );
+  }
+
+  // PDF Upload methods
+  async uploadServicePdf(
+    serviceType: "scheme-services" | "certificate-services" | "contact-services",
+    serviceId: number,
+    file: File,
+  ): Promise<{ pdfUrl: string; message: string }> {
+    const formData = new FormData();
+    formData.append("pdf", file);
+
+    const url = `${this.baseURL}/${serviceType}/${serviceId}/upload-pdf`;
+    const headers: Record<string, string> = {};
+    if (this.token) {
+      headers.Authorization = `Bearer ${this.token}`;
+    }
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: formData,
+      credentials: "include",
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || errorData.error || "Failed to upload PDF");
+    }
+
+    return response.json();
+  }
+
+  // Image Upload for grievances
+  async uploadGrievanceImage(
+    grievanceId: number,
+    file: File,
+  ): Promise<{ imageUrl: string; message: string }> {
+    const formData = new FormData();
+    formData.append("image", file);
+
+    const url = `${this.baseURL}/grievances/${grievanceId}/upload-image`;
+    const response = await fetch(url, {
+      method: "POST",
+      body: formData,
+      credentials: "include",
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || "Failed to upload image");
+    }
+
+    return response.json();
+  }
+
   // Office Management API methods
 
   // Get office by name
@@ -921,6 +1213,17 @@ export class ApiClient {
     );
   }
 
+  async getPublicFeedbacks(): Promise<FeedbackListResponse> {
+    return this.makeRequest<FeedbackListResponse>("/feedbacks/public/recent");
+  }
+
+  async sendFeedbackOtp(email: string, turnstileToken: string): Promise<void> {
+    return this.makeRequest<void>("/feedbacks/public/send-otp", {
+      method: "POST",
+      body: JSON.stringify({ email, turnstileToken }),
+    });
+  }
+
   async getFeedback(id: number): Promise<FeedbackResponse> {
     return this.makeRequest<FeedbackResponse>(`/feedbacks/${id}`);
   }
@@ -977,6 +1280,17 @@ export class ApiClient {
     );
   }
 
+  async getPublicGrievances(): Promise<GrievanceListResponse> {
+    return this.makeRequest<GrievanceListResponse>("/grievances/public/recent");
+  }
+
+  async sendGrievanceOtp(email: string, turnstileToken: string): Promise<void> {
+    return this.makeRequest<void>("/grievances/public/send-otp", {
+      method: "POST",
+      body: JSON.stringify({ email, turnstileToken }),
+    });
+  }
+
   async getGrievance(id: number): Promise<GrievanceResponse> {
     return this.makeRequest<GrievanceResponse>(`/grievances/${id}`);
   }
@@ -994,6 +1308,17 @@ export class ApiClient {
     return this.makeRequest<GrievanceResponse>(`/grievances/${id}`, {
       method: "PUT",
       body: JSON.stringify(data),
+    });
+  }
+
+  async forwardGrievance(
+    id: number,
+    departmentId: number,
+    adminNotes: string,
+  ): Promise<GrievanceResponse> {
+    return this.makeRequest<GrievanceResponse>(`/grievances/${id}/forward`, {
+      method: "PATCH",
+      body: JSON.stringify({ departmentId, adminNotes }),
     });
   }
 
@@ -1157,16 +1482,16 @@ export class ApiClient {
     return this.makeRequest<PostsResponse>(`/offices/public/${officeId}/posts`);
   }
 
-  // Get all published services for admin dashboard
+  // Get all published services (public - no auth required)
   async getAllPublishedServices(): Promise<{
     schemeServices: SchemeService[];
     certificateServices: CertificateService[];
     contactServices: ContactService[];
   }> {
     const [schemes, certificates, contacts] = await Promise.all([
-      this.getSchemeServices({ status: "published" }),
-      this.getCertificateServices({ status: "published" }),
-      this.getContactServices({ status: "published" }),
+      this.getPublicSchemeServices({ limit: 100 }),
+      this.getPublicCertificateServices({ limit: 100 }),
+      this.getPublicContactServices({ limit: 100 }),
     ]);
 
     return {

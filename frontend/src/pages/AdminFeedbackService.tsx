@@ -29,11 +29,11 @@ export default function AdminFeedbackService() {
   });
 
   useEffect(() => {
-    fetchFeedbacks();
+    fetchFeedbacks(true);
   }, []);
 
-  const fetchFeedbacks = async () => {
-    setLoading(true);
+  const fetchFeedbacks = async (showSpinner = false) => {
+    if (showSpinner) setLoading(true);
     try {
       // Fetch new feedbacks
       const newResponse = await apiClient.getFeedbacks({ status: "new" });
@@ -70,7 +70,7 @@ export default function AdminFeedbackService() {
     } catch (error) {
       console.error("Error fetching feedbacks:", error);
     } finally {
-      setLoading(false);
+      if (showSpinner) setLoading(false);
     }
   };
 
@@ -92,9 +92,9 @@ export default function AdminFeedbackService() {
   };
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex flex-col md:flex-row min-h-screen">
       <AdminSidebar />
-      <div className="flex-1 bg-gradient-to-br from-blue-50 via-white to-purple-50">
+      <div className="flex-1 bg-gray-50">
         <div className="container mx-auto px-4 py-8">
           <h1 className="text-3xl font-bold mb-2">Feedback Service</h1>
           <p className="text-gray-600 mb-8">
@@ -116,10 +116,10 @@ export default function AdminFeedbackService() {
                     <CardTitle className="text-sm font-medium">
                       New Feedbacks
                     </CardTitle>
-                    <MessageSquare className="h-4 w-4 text-blue-600" />
+                    <MessageSquare className="h-4 w-4 text-teal-600" />
                   </CardHeader>
                   <CardContent>
-                    <div className="text-2xl font-bold text-blue-600">
+                    <div className="text-2xl font-bold text-teal-600">
                       {stats.newFeedbacks}
                     </div>
                     <p className="text-xs text-muted-foreground">
@@ -148,10 +148,10 @@ export default function AdminFeedbackService() {
                     <CardTitle className="text-sm font-medium">
                       Total Feedbacks
                     </CardTitle>
-                    <Activity className="h-4 w-4 text-purple-600" />
+                    <Activity className="h-4 w-4 text-teal-600" />
                   </CardHeader>
                   <CardContent>
-                    <div className="text-2xl font-bold text-purple-600">
+                    <div className="text-2xl font-bold text-teal-600">
                       {stats.totalFeedbacks}
                     </div>
                     <p className="text-xs text-muted-foreground">
@@ -218,7 +218,7 @@ export default function AdminFeedbackService() {
                             {fb.email} •{" "}
                             {new Date(fb.createdAt).toLocaleDateString()}
                             {fb.category && (
-                              <span className="ml-2 bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs">
+                              <span className="ml-2 bg-teal-100 text-teal-800 px-2 py-1 rounded text-xs">
                                 {fb.category}
                               </span>
                             )}
@@ -281,7 +281,7 @@ export default function AdminFeedbackService() {
                               ? new Date(fb.resolvedAt).toLocaleDateString()
                               : "N/A"}
                             {fb.category && (
-                              <span className="ml-2 bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs">
+                              <span className="ml-2 bg-teal-100 text-teal-800 px-2 py-1 rounded text-xs">
                                 {fb.category}
                               </span>
                             )}

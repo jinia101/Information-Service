@@ -44,7 +44,7 @@ export default function AdminLogin() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-purple-50">
+    <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <div className="w-full max-w-md px-4">
         <Card>
           <CardHeader>
@@ -88,7 +88,7 @@ export default function AdminLogin() {
                 Don't have an account?{" "}
                 <Link
                   to="/admin/register"
-                  className="text-blue-600 hover:underline"
+                  className="text-teal-600 hover:underline"
                 >
                   Create account
                 </Link>

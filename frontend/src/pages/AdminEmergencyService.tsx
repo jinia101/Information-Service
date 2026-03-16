@@ -14,29 +14,24 @@ import { useEffect, useState } from "react";
 import {
   getServices,
   deleteService,
-  saveService,
 } from "../lib/localStorageUtils";
 
-const dummyDepartments = [
-  {
-    name: "Disaster Management Department",
-    category: "Disaster Management",
-    summary: "Handles disaster response and preparedness.",
-  },
-  {
-    name: "Healthcare Department",
-    category: "Healthcare",
-    summary: "Provides emergency medical services.",
-  },
-];
+interface EmergencyDept {
+  id?: string | number;
+  name: string;
+  category: string;
+  summary: string;
+  status?: string;
+  type?: string;
+}
 
 export default function AdminEmergencyService() {
   const [activeTab, setActiveTab] = useState("create");
   const navigate = useNavigate();
-  const [departments, setDepartments] = useState([]);
+  const [departments, setDepartments] = useState<EmergencyDept[]>([]);
 
   useEffect(() => {
-    let loaded = getServices();
+    let loaded = getServices() as EmergencyDept[];
     // If there are no published departments, add realistic dummy data
     setDepartments(loaded);
   }, []);
@@ -57,22 +52,22 @@ export default function AdminEmergencyService() {
   };
   // Dummy pending departments for display
 
-  const handleEdit = (dept) => {
+  const handleEdit = (dept: EmergencyDept) => {
     navigate(`/admin/edit-department/${encodeURIComponent(dept.name)}`);
   };
 
-  const handleView = (dept) => {
+  const handleView = (dept: EmergencyDept) => {
     navigate(`/admin/edit-department/${encodeURIComponent(dept.name)}`);
   };
-  const handleDelete = (dept) => {
-    deleteService(dept.id);
-    setDepartments(getServices());
+  const handleDelete = (dept: EmergencyDept) => {
+    deleteService(dept.id ?? "");
+    setDepartments(getServices() as EmergencyDept[]);
   };
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex flex-col md:flex-row min-h-screen">
       <AdminSidebar />
-      <div className="flex-1 bg-gradient-to-br from-blue-50 via-white to-purple-50">
+      <div className="flex-1 bg-gray-50">
         <div className="container mx-auto px-4 py-8">
           <h1 className="text-3xl font-bold mb-2">Emergency Service</h1>
           <p className="text-gray-600 mb-8">
@@ -100,10 +95,10 @@ export default function AdminEmergencyService() {
                 <CardTitle className="text-sm font-medium">
                   Active Services
                 </CardTitle>
-                <Activity className="h-4 w-4 text-blue-600" />
+                <Activity className="h-4 w-4 text-teal-600" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-blue-600">
+                <div className="text-2xl font-bold text-teal-600">
                   {stats.active}
                 </div>
                 <p className="text-xs text-muted-foreground">
@@ -130,10 +125,10 @@ export default function AdminEmergencyService() {
             <Card className="hover:shadow-lg transition-shadow">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium">Users</CardTitle>
-                <Users className="h-4 w-4 text-purple-600" />
+                <Users className="h-4 w-4 text-teal-600" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-purple-600">
+                <div className="text-2xl font-bold text-teal-600">
                   {stats.users}
                 </div>
                 <p className="text-xs text-muted-foreground">

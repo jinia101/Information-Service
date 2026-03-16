@@ -12,16 +12,46 @@ import { ServicesMenu } from "@/components/ui/sidebar";
 import { Search } from "lucide-react";
 import { getServices } from "../lib/localStorageUtils";
 
+interface ServiceOffice {
+  officeName: string;
+  address: string;
+  district: string;
+  block: string;
+}
+
+interface ServicePost {
+  postName: string;
+  officeIndex: number;
+}
+
+interface ServiceEmployee {
+  employeeName: string;
+  postIndex: number;
+  email?: string;
+  phone?: string;
+}
+
+interface EmergencyService {
+  id: string | number;
+  name: string;
+  summary: string;
+  status: string;
+  category: string;
+  offices?: ServiceOffice[];
+  posts?: ServicePost[];
+  employees?: ServiceEmployee[];
+}
+
 export default function UserEmergencyService() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("");
-  const [modalDept, setModalDept] = useState(null);
+  const [modalDept, setModalDept] = useState<EmergencyService | null>(null);
   const stats = {
     published: 156,
     active: 23,
     total: 179,
   };
-  const publishedDepartments = getServices().filter(
+  const publishedDepartments = (getServices() as EmergencyService[]).filter(
     (d) => d.status === "published" && d.category === "Emergency",
   );
   const filteredDepartments = publishedDepartments.filter((d) =>
@@ -29,9 +59,9 @@ export default function UserEmergencyService() {
   );
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex flex-col md:flex-row min-h-screen">
       <ServicesMenu />
-      <div className="flex-1 bg-gradient-to-br from-blue-50 via-white to-purple-50">
+      <div className="flex-1 bg-gray-50">
         <div className="container mx-auto px-4 py-8">
           <h1 className="text-3xl font-bold mb-2">Emergency Service</h1>
           <p className="text-gray-600 mb-8">
@@ -62,7 +92,7 @@ export default function UserEmergencyService() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-blue-600">
+                <div className="text-2xl font-bold text-teal-600">
                   {stats.active}
                 </div>
                 <p className="text-xs text-muted-foreground">
@@ -77,7 +107,7 @@ export default function UserEmergencyService() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-purple-600">
+                <div className="text-2xl font-bold text-teal-600">
                   {stats.total}
                 </div>
                 <p className="text-xs text-muted-foreground">
@@ -125,7 +155,7 @@ export default function UserEmergencyService() {
                 <CardContent>
                   <Button
                     onClick={() => setModalDept(dept)}
-                    className="w-full mt-2 bg-blue-600 text-white"
+                    className="w-full mt-2 bg-teal-600 text-white"
                   >
                     View Details
                   </Button>
@@ -155,7 +185,7 @@ export default function UserEmergencyService() {
                   <h3 className="font-semibold mb-2">Offices</h3>
                   <ul className="list-disc pl-6">
                     {modalDept.offices &&
-                      modalDept.offices.map((office, idx) => (
+                      modalDept.offices.map((office: ServiceOffice, idx: number) => (
                         <li key={idx} className="mb-1">
                           <span className="font-medium">
                             {office.officeName}
@@ -170,7 +200,7 @@ export default function UserEmergencyService() {
                   <h3 className="font-semibold mb-2">Posts</h3>
                   <ul className="list-disc pl-6">
                     {modalDept.posts &&
-                      modalDept.posts.map((post, idx) => (
+                      modalDept.posts.map((post: ServicePost, idx: number) => (
                         <li key={idx} className="mb-1">
                           <span className="font-medium">{post.postName}</span>{" "}
                           (Office:{" "}
@@ -185,7 +215,7 @@ export default function UserEmergencyService() {
                   <h3 className="font-semibold mb-2">Employees</h3>
                   <ul className="list-disc pl-6">
                     {modalDept.employees &&
-                      modalDept.employees.map((emp, idx) => (
+                      modalDept.employees.map((emp: ServiceEmployee, idx: number) => (
                         <li key={idx} className="mb-1">
                           <span className="font-medium">
                             {emp.employeeName}

@@ -22,13 +22,13 @@ import { ServicesMenu } from "@/components/ui/sidebar";
 import {
   MessageSquare,
   Star,
-  ThumbsUp,
   Send,
   CheckCircle,
   Clock,
 } from "lucide-react";
 import { apiClient } from "../types/api";
 import type { Feedback, CreateFeedbackRequest } from "../types/api";
+import { toast } from "@/hooks/use-toast";
 
 export default function UserFeedbackService() {
   const [formData, setFormData] = useState<CreateFeedbackRequest>({
@@ -116,19 +116,19 @@ export default function UserFeedbackService() {
       // Refresh feedback list
       fetchFeedbacks();
 
-      alert("Feedback submitted successfully!");
+      toast({ title: "Success", description: "Feedback submitted successfully!" });
     } catch (error) {
       console.error("Error submitting feedback:", error);
-      alert("Failed to submit feedback. Please try again.");
+      toast({ title: "Error", description: "Failed to submit feedback. Please try again.", variant: "destructive" });
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex flex-col md:flex-row min-h-screen">
       <ServicesMenu />
-      <div className="flex-1 bg-gradient-to-br from-blue-50 via-white to-purple-50">
+      <div className="flex-1 bg-gray-50">
         <div className="container mx-auto px-4 py-8">
           <h1 className="text-3xl font-bold mb-2">Feedback Service</h1>
           <p className="text-gray-600 mb-8">
@@ -142,10 +142,10 @@ export default function UserFeedbackService() {
                 <CardTitle className="text-sm font-medium">
                   Total Feedbacks
                 </CardTitle>
-                <MessageSquare className="h-4 w-4 text-blue-600" />
+                <MessageSquare className="h-4 w-4 text-teal-600" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-blue-600">
+                <div className="text-2xl font-bold text-teal-600">
                   {stats.totalFeedbacks}
                 </div>
                 <p className="text-xs text-muted-foreground">
@@ -342,7 +342,7 @@ export default function UserFeedbackService() {
 
                 <Button
                   type="submit"
-                  className="w-full bg-blue-600 hover:bg-blue-700"
+                  className="w-full bg-teal-600 hover:bg-teal-700"
                   disabled={submitting}
                 >
                   {submitting ? "Submitting..." : "Submit Feedback"}

@@ -1,10 +1,10 @@
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
-import { Home, Search, ArrowLeft } from "lucide-react";
+import { Home, Search } from "lucide-react";
 
 const NotFound = () => {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center">
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
       <div className="text-center px-4">
         <div className="mb-8">
           <div className="h-24 w-24 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-6">

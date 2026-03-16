@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -13,8 +13,6 @@ import { Link, useNavigate } from "react-router-dom";
 import {
   Search,
   ArrowLeft,
-  Activity,
-  TrendingUp,
   CheckCircle,
   FileText,
   Award,
@@ -26,11 +24,6 @@ import {
   StatsCardSkeleton,
 } from "@/components/ui/loading-skeletons";
 import { apiClient } from "../types/api";
-import type {
-  SchemeService,
-  CertificateService,
-  ContactService,
-} from "../types/api";
 
 // Combined service type for unified display
 type CombinedService = {
@@ -75,8 +68,8 @@ export default function UserDashboard() {
                 service.applicationMode === "both"
                   ? "Online/Offline"
                   : service.applicationMode === "online"
-                  ? "Online"
-                  : "Offline",
+                    ? "Online"
+                    : "Offline",
             });
           });
       }
@@ -93,8 +86,8 @@ export default function UserDashboard() {
                 service.applicationMode === "both"
                   ? "Online/Offline"
                   : service.applicationMode === "online"
-                  ? "Online"
-                  : "Offline",
+                    ? "Online"
+                    : "Offline",
             });
           });
       }
@@ -120,27 +113,44 @@ export default function UserDashboard() {
     }
   };
 
-  const filteredServices = allServices.filter(
-    (service) =>
-      service.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      service.summary?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      service.type?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (service.targetAudience &&
-        service.targetAudience.some((audience) =>
-          audience.toLowerCase().includes(searchQuery.toLowerCase()),
-        )) ||
-      (service.departmentType &&
-        service.departmentType
-          .toLowerCase()
-          .includes(searchQuery.toLowerCase())),
-  );
+  // ⚡ Bolt: Memoize filtered services to prevent unnecessary recalculations on every render
+  const filteredServices = useMemo(() => {
+    const lowerQuery = searchQuery.toLowerCase();
 
-  const stats = {
-    published: allServices.length,
-    schemes: allServices.filter((s) => s.type === "scheme").length,
-    certificates: allServices.filter((s) => s.type === "certificate").length,
-    contacts: allServices.filter((s) => s.type === "contact").length,
-  };
+    return allServices.filter(
+      (service) =>
+        service.name?.toLowerCase().includes(lowerQuery) ||
+        service.summary?.toLowerCase().includes(lowerQuery) ||
+        service.type?.toLowerCase().includes(lowerQuery) ||
+        (service.targetAudience &&
+          service.targetAudience.some((audience) =>
+            audience.toLowerCase().includes(lowerQuery),
+          )) ||
+        (service.departmentType &&
+          service.departmentType.toLowerCase().includes(lowerQuery)),
+    );
+  }, [allServices, searchQuery]);
+
+  // ⚡ Bolt: Memoize stats separately so it doesn't recalculate when search changes
+  const stats = useMemo(() => {
+    // Calculate stats efficiently in one pass instead of 3 separate filters
+    let schemesCount = 0;
+    let certsCount = 0;
+    let contactsCount = 0;
+
+    for (const s of allServices) {
+      if (s.type === "scheme") schemesCount++;
+      else if (s.type === "certificate") certsCount++;
+      else if (s.type === "contact") contactsCount++;
+    }
+
+    return {
+      published: allServices.length,
+      schemes: schemesCount,
+      certificates: certsCount,
+      contacts: contactsCount,
+    };
+  }, [allServices]);
 
   const getServiceIcon = (type: string) => {
     switch (type) {
@@ -158,11 +168,11 @@ export default function UserDashboard() {
   const getServiceRoute = (service: CombinedService) => {
     switch (service.type) {
       case "scheme":
-        return "/user-scheme-service";
+        return "/scheme-service";
       case "certificate":
-        return "/user-certificate-service";
+        return "/certificate-service";
       case "contact":
-        return "/user-contact-service";
+        return "/contact-service";
       default:
         return "/";
     }
@@ -173,18 +183,18 @@ export default function UserDashboard() {
       case "scheme":
         return "bg-green-100 text-green-800";
       case "certificate":
-        return "bg-blue-100 text-blue-800";
+        return "bg-teal-100 text-teal-800";
       case "contact":
-        return "bg-purple-100 text-purple-800";
+        return "bg-slate-100 text-slate-800";
       default:
         return "bg-gray-100 text-gray-800";
     }
   };
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex flex-col md:flex-row min-h-screen">
       <ServicesMenu />
-      <div className="flex-1 bg-gradient-to-br from-blue-50 via-white to-purple-50">
+      <div className="flex-1 bg-gray-50">
         {/* Header */}
         <header className="border-b bg-white/80 backdrop-blur-md sticky top-0 z-40">
           <div className="container mx-auto px-4 py-4">
@@ -207,11 +217,15 @@ export default function UserDashboard() {
 
         <div className="container mx-auto px-4 py-8">
           {/* Welcome Section */}
-          <div className="mb-8">
-            <h1 className="text-3xl font-bold mb-2">Welcome back!</h1>
-            <p className="text-gray-600">
-              Discover and manage your information services
-            </p>
+          <div className="mb-8 p-8 rounded-2xl bg-gradient-to-br from-teal-700 to-emerald-900 text-white shadow-xl relative overflow-hidden">
+            <div className="absolute top-0 right-0 -mr-20 -mt-20 w-64 h-64 rounded-full bg-white opacity-10 blur-3xl"></div>
+            <div className="absolute bottom-0 left-0 -ml-20 -mb-20 w-80 h-80 rounded-full bg-teal-300 opacity-20 blur-3xl"></div>
+            <div className="relative z-10">
+              <h1 className="text-4xl font-extrabold mb-3 tracking-tight">Welcome back!</h1>
+              <p className="text-teal-50 text-lg max-w-xl font-medium">
+                Discover, manage, and interact with all public information services via your centralized citizen dashboard.
+              </p>
+            </div>
           </div>
 
           {/* Stats Cards */}
@@ -239,10 +253,10 @@ export default function UserDashboard() {
               <Card className="hover:shadow-lg transition-shadow">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-sm font-medium">Schemes</CardTitle>
-                  <Award className="h-4 w-4 text-blue-600" />
+                  <Award className="h-4 w-4 text-teal-600" />
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold text-blue-600">
+                  <div className="text-2xl font-bold text-teal-600">
                     {stats.schemes}
                   </div>
                   <p className="text-xs text-muted-foreground">
@@ -256,10 +270,10 @@ export default function UserDashboard() {
                   <CardTitle className="text-sm font-medium">
                     Certificates
                   </CardTitle>
-                  <FileText className="h-4 w-4 text-purple-600" />
+                  <FileText className="h-4 w-4 text-teal-600" />
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold text-purple-600">
+                  <div className="text-2xl font-bold text-teal-600">
                     {stats.certificates}
                   </div>
                   <p className="text-xs text-muted-foreground">
@@ -313,7 +327,7 @@ export default function UserDashboard() {
               {filteredServices.map((service) => (
                 <Card
                   key={`${service.type}-${service.id}`}
-                  className="hover:shadow-lg transition-all duration-200 hover:-translate-y-1"
+                  className="hover:shadow-lg transition-all duration-200 hover:-translate-y-1 flex flex-col h-full"
                 >
                   <CardHeader>
                     <div className="flex items-start justify-between">
@@ -329,10 +343,10 @@ export default function UserDashboard() {
                               service.type.slice(1)}
                           </Badge>
                         </div>
-                        <CardTitle className="text-lg mb-1">
+                        <CardTitle className="text-lg mb-1 line-clamp-1">
                           {service.name}
                         </CardTitle>
-                        <CardDescription>{service.summary}</CardDescription>
+                        <CardDescription className="line-clamp-2">{service.summary}</CardDescription>
                       </div>
                       {service.applicationMode && (
                         <Badge variant="outline" className="ml-2">
@@ -341,8 +355,8 @@ export default function UserDashboard() {
                       )}
                     </div>
                   </CardHeader>
-                  <CardContent>
-                    <div className="space-y-4">
+                  <CardContent className="flex-1 flex flex-col">
+                    <div className="space-y-4 flex-1">
                       {service.targetAudience &&
                         service.targetAudience.length > 0 && (
                           <div className="flex flex-wrap gap-1">
@@ -392,15 +406,15 @@ export default function UserDashboard() {
                       </div>
 
                       <Button
-                        className="w-full"
+                        className="w-full mt-auto"
                         onClick={() => navigate(getServiceRoute(service))}
                       >
                         View{" "}
                         {service.type === "scheme"
                           ? "Scheme"
                           : service.type === "certificate"
-                          ? "Certificate"
-                          : "Contacts"}
+                            ? "Certificate"
+                            : "Contacts"}
                         <ArrowLeft className="ml-2 h-4 w-4 rotate-180" />
                       </Button>
                     </div>

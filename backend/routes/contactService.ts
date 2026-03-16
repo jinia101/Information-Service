@@ -1,29 +1,50 @@
 import express, { Request, Response } from "express";
-import { PrismaClient } from "@prisma/client";
 import { body, param, validationResult } from "express-validator";
-import { authenticateAdmin } from "./adminAuth";
+import { prisma } from "../lib/prisma";
+import { queryCache } from "../lib/prisma";
+import { authenticateAdmin } from "../middleware/auth";
+import { readLimiter } from "../middleware/rateLimiter";
+import { pdfUpload, uploadPDFToOCI, deleteFromOCI } from "../lib/fileUpload";
 import "../types/express";
 
 const router = express.Router();
-const prisma = new PrismaClient();
+
+// Helper to get authorization where clause based on admin role
+const getAdminWhereClause = (admin: NonNullable<Request["admin"]>) => {
+  if (admin.role === "super_admin") return {};
+  if (admin.role === "department_admin" && admin.departmentId) {
+    return { departmentId: admin.departmentId };
+  }
+  return { adminId: admin.id };
+};
+
+// Deep include for full contact service with offices, posts, employees
+const fullInclude = {
+  contacts: {
+    include: {
+      posts: {
+        include: {
+          employees: true,
+        },
+        orderBy: { createdAt: "asc" as const },
+      },
+    },
+  },
+  documents: true,
+  admin: {
+    select: { id: true, name: true, email: true, role: true },
+  },
+};
 
 // GET /api/contact-services - Get all contact services
 router.get("/", authenticateAdmin, async (req: Request, res: Response) => {
   try {
-    console.log("Fetching contact services for admin:", req.admin?.id);
-
+    const adminWhereClause = getAdminWhereClause(req.admin!);
     const contactServices = await prisma.contactService.findMany({
-      include: {
-        contacts: true,
-        documents: true,
-        admin: {
-          select: { id: true, name: true, email: true },
-        },
-      },
+      where: adminWhereClause,
+      include: fullInclude,
       orderBy: { createdAt: "desc" },
     });
-
-    console.log(`Found ${contactServices.length} contact services`);
 
     res.json({
       success: true,
@@ -34,7 +55,7 @@ router.get("/", authenticateAdmin, async (req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       message: "Failed to fetch contact services",
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: "An internal error occurred",
     });
   }
 });
@@ -56,28 +77,22 @@ router.get(
       }
 
       const id = parseInt(req.params.id);
-      console.log(`Fetching contact service with ID: ${id}`);
 
-      const contactService = await prisma.contactService.findUnique({
-        where: { id },
-        include: {
-          contacts: true,
-          documents: true,
-          admin: {
-            select: { id: true, name: true, email: true },
-          },
+      const adminWhereClause = getAdminWhereClause(req.admin!);
+      const contactService = await prisma.contactService.findFirst({
+        where: {
+          id,
+          ...adminWhereClause,
         },
+        include: fullInclude,
       });
 
       if (!contactService) {
-        console.log(`Contact service with ID ${id} not found`);
         return res.status(404).json({
           success: false,
           message: "Contact service not found",
         });
       }
-
-      console.log(`Found contact service: ${contactService.name}`);
 
       res.json({
         success: true,
@@ -88,7 +103,7 @@ router.get(
       res.status(500).json({
         success: false,
         message: "Failed to fetch contact service",
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: "An internal error occurred",
       });
     }
   },
@@ -120,8 +135,6 @@ router.post(
       }
 
       const adminId = req.admin!.id;
-      console.log("Creating contact service for admin:", adminId);
-      console.log("Request body:", req.body);
 
       const {
         name,
@@ -132,6 +145,11 @@ router.post(
         onlineUrl,
         offlineAddress,
       } = req.body;
+
+      const departmentId =
+        req.admin!.role === "super_admin"
+          ? req.body.departmentId ?? null
+          : req.admin!.departmentId ?? null;
 
       const contactService = await prisma.contactService.create({
         data: {
@@ -144,20 +162,13 @@ router.post(
           offlineAddress,
           status: "draft",
           adminId,
+          departmentId,
           eligibilityDetails: [],
           contactDetails: [],
           processDetails: [],
         },
-        include: {
-          contacts: true,
-          documents: true,
-          admin: {
-            select: { id: true, name: true, email: true },
-          },
-        },
+        include: fullInclude,
       });
-
-      console.log("Contact service created successfully:", contactService.id);
 
       res.status(201).json({
         success: true,
@@ -169,13 +180,14 @@ router.post(
       res.status(500).json({
         success: false,
         message: "Failed to create contact service",
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: "An internal error occurred",
       });
     }
   },
 );
 
 // PATCH /api/contact-services/:id - Update contact service
+// IMPORTANT: Does NOT replace contacts (offices). Offices are managed via separate endpoints.
 router.patch(
   "/:id",
   authenticateAdmin,
@@ -192,12 +204,13 @@ router.patch(
       }
 
       const id = parseInt(req.params.id);
-      console.log(`Updating contact service with ID: ${id}`);
-      console.log("Update data:", req.body);
 
-      // Check if contact service exists
-      const existingService = await prisma.contactService.findUnique({
-        where: { id },
+      const adminWhereClause = getAdminWhereClause(req.admin!);
+      const existingService = await prisma.contactService.findFirst({
+        where: {
+          id,
+          ...adminWhereClause,
+        },
       });
 
       if (!existingService) {
@@ -207,62 +220,26 @@ router.patch(
         });
       }
 
-      // Extract relationship fields and nested data that shouldn't be directly updated
-      const {
-        contacts,
-        documents,
-        admin,
-        createdAt,
-        updatedAt,
-        id: bodyId,
-        ...updateData
-      } = req.body;
-
-      let prismaUpdateData: any = updateData;
-
-      // If contacts are provided, handle them with Prisma's nested operations
-      if (contacts && Array.isArray(contacts)) {
-        prismaUpdateData.contacts = {
-          deleteMany: {}, // Clear existing contacts
-          create: contacts.map((contact: any) => ({
-            serviceName: contact.serviceName,
-            name: contact.name,
-            designation: contact.designation,
-            contact: contact.contact,
-            email: contact.email || "",
-            district: contact.district,
-            subDistrict: contact.subDistrict || "",
-            block: contact.block || "",
-          })),
-        };
-      }
-
-      // Handle documents if provided
-      if (documents && Array.isArray(documents)) {
-        prismaUpdateData.documents = {
-          deleteMany: {}, // Clear existing documents
-          create: documents.map((doc: any) => ({
-            fileName: doc.fileName,
-            originalName: doc.originalName,
-            mimeType: doc.mimeType,
-            size: doc.size,
-          })),
-        };
+      // Only update whitelisted scalar fields to prevent mass assignment
+      const allowedFields = [
+        "name",
+        "summary",
+        "type",
+        "applicationMode",
+        "isActive",
+      ] as const;
+      const updateData: Record<string, any> = {};
+      for (const field of allowedFields) {
+        if (req.body[field] !== undefined) {
+          updateData[field] = req.body[field];
+        }
       }
 
       const updatedService = await prisma.contactService.update({
         where: { id },
-        data: prismaUpdateData,
-        include: {
-          contacts: true,
-          documents: true,
-          admin: {
-            select: { id: true, name: true, email: true },
-          },
-        },
+        data: updateData,
+        include: fullInclude,
       });
-
-      console.log("Contact service updated successfully");
 
       res.json({
         success: true,
@@ -274,7 +251,84 @@ router.patch(
       res.status(500).json({
         success: false,
         message: "Failed to update contact service",
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: "An internal error occurred",
+      });
+    }
+  },
+);
+
+// POST /api/contact-services/:id/offices - Add office to contact service
+router.post(
+  "/:id/offices",
+  authenticateAdmin,
+  [
+    param("id").isInt().withMessage("ID must be a valid integer"),
+    body("officeName").notEmpty().withMessage("Office name is required"),
+    body("level").notEmpty().withMessage("Level is required"),
+  ],
+  async (req: Request, res: Response) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          success: false,
+          message: "Validation failed",
+          errors: errors.array(),
+        });
+      }
+
+      const serviceId = parseInt(req.params.id);
+
+      const adminWhereClause = getAdminWhereClause(req.admin!);
+      const existingService = await prisma.contactService.findFirst({
+        where: {
+          id: serviceId,
+          ...adminWhereClause,
+        },
+      });
+
+      if (!existingService) {
+        return res.status(404).json({
+          success: false,
+          message: "Contact service not found",
+        });
+      }
+
+      const { officeName, level, pincode, district, block, subdivision } =
+        req.body;
+
+      const newContact = await prisma.contactServiceContact.create({
+        data: {
+          serviceName: existingService.name,
+          name: officeName,
+          designation: level,
+          contact: pincode || "",
+          email: "",
+          district: level === "State" ? "All Districts" : district || "",
+          subDistrict: subdivision || "",
+          block: block || "",
+          contactServiceId: serviceId,
+        },
+        include: {
+          posts: {
+            include: {
+              employees: true,
+            },
+          },
+        },
+      });
+
+      res.status(201).json({
+        success: true,
+        office: newContact,
+        message: "Office added successfully",
+      });
+    } catch (error) {
+      console.error("Error adding office:", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to add office",
+        error: "An internal error occurred",
       });
     }
   },
@@ -297,10 +351,14 @@ router.patch(
       }
 
       const id = parseInt(req.params.id);
-      console.log(`Publishing contact service with ID: ${id}`);
+      const admin = req.admin!;
 
-      const existingService = await prisma.contactService.findUnique({
-        where: { id },
+      const adminWhereClause = getAdminWhereClause(req.admin!);
+      const existingService = await prisma.contactService.findFirst({
+        where: {
+          id,
+          ...adminWhereClause,
+        },
       });
 
       if (!existingService) {
@@ -310,31 +368,95 @@ router.patch(
         });
       }
 
+      // Determine publisher name for accountability
+      const publisherName = admin.role === "super_admin" ? "Admin" : admin.name;
+
       const publishedService = await prisma.contactService.update({
         where: { id },
-        data: { status: "published" },
-        include: {
-          contacts: true,
-          documents: true,
-          admin: {
-            select: { id: true, name: true, email: true },
-          },
+        data: {
+          status: "published",
+          publishedBy: admin.id,
+          publishedByName: publisherName,
         },
+        include: fullInclude,
       });
-
-      console.log("Contact service published successfully");
 
       res.json({
         success: true,
         contactService: publishedService,
         message: "Contact service published successfully",
       });
+
+      // Invalidate public cache
+      await queryCache.invalidate("contacts:public");
     } catch (error) {
       console.error("Error publishing contact service:", error);
       res.status(500).json({
         success: false,
         message: "Failed to publish contact service",
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: "An internal error occurred",
+      });
+    }
+  },
+);
+
+// POST /api/contact-services/:id/upload-pdf - Upload PDF for contact service
+router.post(
+  "/:id/upload-pdf",
+  authenticateAdmin,
+  param("id").isInt().withMessage("ID must be a valid integer"),
+  pdfUpload.single("pdf"),
+  async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+
+      if (!req.file) {
+        return res.status(400).json({
+          success: false,
+          message: "No PDF file uploaded",
+        });
+      }
+
+      const adminWhereClause = getAdminWhereClause(req.admin!);
+      const existingService = await prisma.contactService.findFirst({
+        where: {
+          id,
+          ...adminWhereClause,
+        },
+      });
+
+      if (!existingService) {
+        return res.status(404).json({
+          success: false,
+          message: "Contact service not found",
+        });
+      }
+
+      // Delete old PDF from OCI if it exists
+      if (existingService.pdfUrl?.startsWith("https://")) {
+        await deleteFromOCI(existingService.pdfUrl);
+      }
+
+      const pdfUrl = await uploadPDFToOCI(req.file);
+
+      const updatedService = await prisma.contactService.update({
+        where: { id },
+        data: { pdfUrl },
+        include: fullInclude,
+      });
+
+      res.json({
+        success: true,
+        contactService: updatedService,
+        pdfUrl,
+        message: "PDF uploaded successfully",
+      });
+    } catch (error) {
+      console.error("Error uploading PDF:", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to upload PDF",
+        error: "An internal error occurred",
       });
     }
   },
@@ -362,7 +484,6 @@ router.patch(
       const serviceId = parseInt(req.params.id);
       const { isActive } = req.body;
 
-      // Ensure admin is authenticated
       if (!req.admin) {
         return res.status(401).json({
           success: false,
@@ -370,11 +491,11 @@ router.patch(
         });
       }
 
-      // Verify ownership
+      const adminWhereClause = getAdminWhereClause(req.admin!);
       const existingService = await prisma.contactService.findFirst({
         where: {
           id: serviceId,
-          adminId: req.admin.id,
+          ...adminWhereClause,
         },
       });
 
@@ -385,20 +506,13 @@ router.patch(
         });
       }
 
-      // Update isActive status
       const updatedService = await prisma.contactService.update({
         where: { id: serviceId },
         data: {
           isActive: isActive,
           updatedAt: new Date(),
         },
-        include: {
-          admin: {
-            select: { id: true, name: true, email: true },
-          },
-          contacts: true,
-          documents: true,
-        },
+        include: fullInclude,
       });
 
       res.json({
@@ -408,12 +522,15 @@ router.patch(
         } successfully`,
         contactService: updatedService,
       });
+
+      // Invalidate public cache
+      await queryCache.invalidate("contacts:public");
     } catch (error) {
       console.error("Toggle contact service active status error:", error);
       res.status(500).json({
         success: false,
         message: "Failed to toggle contact service status",
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: "An internal error occurred",
       });
     }
   },
@@ -436,10 +553,13 @@ router.delete(
       }
 
       const id = parseInt(req.params.id);
-      console.log(`Deleting contact service with ID: ${id}`);
 
-      const existingService = await prisma.contactService.findUnique({
-        where: { id },
+      const adminWhereClause = getAdminWhereClause(req.admin!);
+      const existingService = await prisma.contactService.findFirst({
+        where: {
+          id,
+          ...adminWhereClause,
+        },
       });
 
       if (!existingService) {
@@ -453,7 +573,8 @@ router.delete(
         where: { id },
       });
 
-      console.log("Contact service deleted successfully");
+      // Invalidate public cache
+      await queryCache.invalidate("contacts:public");
 
       res.json({
         success: true,
@@ -464,7 +585,7 @@ router.delete(
       res.status(500).json({
         success: false,
         message: "Failed to delete contact service",
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: "An internal error occurred",
       });
     }
   },
@@ -473,12 +594,24 @@ router.delete(
 // PUBLIC ROUTES (no authentication required)
 
 // GET /api/contact-services/public/list - Get all published contact services (public)
-router.get("/public/list", async (req: Request, res: Response) => {
+router.get("/public/list", readLimiter, async (req: Request, res: Response) => {
   try {
     const { page = 1, limit = 10, search } = req.query;
     const pageNum = parseInt(page as string);
-    const limitNum = parseInt(limit as string);
+    const limitNum = Math.min(parseInt(limit as string) || 10, 100);
     const offset = (pageNum - 1) * limitNum;
+
+    // Use cache for non-search queries (deep include is expensive)
+    const cacheKey = search
+      ? null
+      : `contacts:public:list:${pageNum}:${limitNum}`;
+    if (cacheKey) {
+      const cached = await queryCache.get<any>(cacheKey);
+      if (cached) {
+        res.set("Cache-Control", "public, max-age=60, s-maxage=120");
+        return res.json(cached);
+      }
+    }
 
     let whereClause: any = {
       status: "published",
@@ -496,7 +629,15 @@ router.get("/public/list", async (req: Request, res: Response) => {
       prisma.contactService.findMany({
         where: whereClause,
         include: {
-          contacts: true,
+          contacts: {
+            include: {
+              posts: {
+                include: {
+                  employees: true,
+                },
+              },
+            },
+          },
           documents: true,
         },
         orderBy: { createdAt: "desc" },
@@ -510,7 +651,7 @@ router.get("/public/list", async (req: Request, res: Response) => {
 
     const totalPages = Math.ceil(total / limitNum);
 
-    res.json({
+    const result = {
       success: true,
       contactServices,
       pagination: {
@@ -519,18 +660,26 @@ router.get("/public/list", async (req: Request, res: Response) => {
         total,
         pages: totalPages,
       },
-    });
+    };
+
+    // Cache non-search results for 2 minutes
+    if (cacheKey) {
+      await queryCache.set(cacheKey, result, 120_000); // Cache 2 min
+    }
+    res.set("X-Cache", "MISS");
+    res.set("Cache-Control", "public, max-age=60, s-maxage=120");
+    res.json(result);
   } catch (error) {
     console.error("Error fetching public contact services:", error);
     res.status(500).json({
       success: false,
       message: "Failed to fetch contact services",
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: "An internal error occurred",
     });
   }
 });
 
-// DELETE /api/contact-services/:serviceId/contacts/:contactId - Delete individual contact
+// DELETE /api/contact-services/:serviceId/contacts/:contactId - Delete individual office
 router.delete(
   "/:serviceId/contacts/:contactId",
   authenticateAdmin,
@@ -550,11 +699,12 @@ router.delete(
       const serviceId = parseInt(req.params.serviceId);
       const contactId = parseInt(req.params.contactId);
 
-      console.log(`Deleting contact ${contactId} from service ${serviceId}`);
-
-      // Check if the service exists
-      const existingService = await prisma.contactService.findUnique({
-        where: { id: serviceId },
+      const adminWhereClause = getAdminWhereClause(req.admin!);
+      const existingService = await prisma.contactService.findFirst({
+        where: {
+          id: serviceId,
+          ...adminWhereClause,
+        },
       });
 
       if (!existingService) {
@@ -564,7 +714,6 @@ router.delete(
         });
       }
 
-      // Check if the contact exists and belongs to the service
       const existingContact = await prisma.contactServiceContact.findFirst({
         where: {
           id: contactId,
@@ -579,23 +728,20 @@ router.delete(
         });
       }
 
-      // Delete the contact
       await prisma.contactServiceContact.delete({
         where: { id: contactId },
       });
 
-      console.log("Contact deleted successfully");
-
       res.json({
         success: true,
-        message: "Contact deleted successfully",
+        message: "Office deleted successfully",
       });
     } catch (error) {
       console.error("Error deleting contact:", error);
       res.status(500).json({
         success: false,
         message: "Failed to delete contact",
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: "An internal error occurred",
       });
     }
   },

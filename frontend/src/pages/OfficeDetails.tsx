@@ -270,8 +270,8 @@ const OfficeDetails: React.FC = () => {
   };
 
   return (
-    <div className="flex min-h-screen">
-      <div className="flex-1 bg-gradient-to-br from-blue-50 via-white to-purple-50">
+    <div className="flex flex-col md:flex-row min-h-screen">
+      <div className="flex-1 bg-gray-50">
         <div className="container mx-auto px-4 py-8">
           <div className="mb-8">
             <h1 className="text-3xl font-bold mb-2">
@@ -327,7 +327,7 @@ const OfficeDetails: React.FC = () => {
                   </Button>
                   <Button
                     onClick={handleAddPost}
-                    className="bg-blue-600 hover:bg-blue-700"
+                    className="bg-teal-600 hover:bg-teal-700"
                   >
                     Add Post
                   </Button>
@@ -373,7 +373,7 @@ const OfficeDetails: React.FC = () => {
                   </p>
                   <Button
                     onClick={() => setShowAddPostForm(true)}
-                    className="bg-blue-600 hover:bg-blue-700"
+                    className="bg-teal-600 hover:bg-teal-700"
                   >
                     Add First Post
                   </Button>
@@ -388,7 +388,7 @@ const OfficeDetails: React.FC = () => {
                     </h2>
                     <Button
                       onClick={() => setShowAddPostForm(true)}
-                      className="bg-blue-600 hover:bg-blue-700"
+                      className="bg-teal-600 hover:bg-teal-700"
                     >
                       Add New Post
                     </Button>

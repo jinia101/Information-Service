@@ -31,16 +31,31 @@ export default function UserContactService() {
   const [departmentTypeFilter, setDepartmentTypeFilter] = useState("all"); // 'all', 'emergency', 'regular'
   const [loading, setLoading] = useState(false);
 
-  const tripuraDistricts = [
-    "Dhalai",
-    "Gomati",
-    "Khowai",
-    "North Tripura",
-    "Sepahijala",
-    "South Tripura",
-    "Unakoti",
-    "West Tripura",
-  ];
+  const inferOfficeLevel = (contact: any): "State" | "District" => {
+    const district = (contact?.district || "").toLowerCase();
+    const subDistrict = (contact?.subDistrict || "").toLowerCase();
+    const block = (contact?.block || "").toLowerCase();
+    const designation = (contact?.designation || "").toLowerCase();
+
+    if (
+      district.includes("state capital") ||
+      district.includes("all districts") ||
+      designation.includes("chief") ||
+      designation.includes("state")
+    ) {
+      return "State";
+    }
+
+    if (
+      subDistrict.includes("district") ||
+      block.includes("district") ||
+      designation.includes("district")
+    ) {
+      return "District";
+    }
+
+    return "District";
+  };
 
   const fetchOfficeDetails = async (service: any) => {
     try {
@@ -107,7 +122,7 @@ export default function UserContactService() {
             officeDetails.push({
               officeName: contact.name,
               officeId: contact.id,
-              level: contact.designation,
+              level: inferOfficeLevel(contact),
               district: contact.district,
               subDistrict: contact.subDistrict,
               block: contact.block,
@@ -175,14 +190,20 @@ export default function UserContactService() {
   };
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex flex-col md:flex-row min-h-screen">
       <ServicesMenu />
-      <div className="flex-1 bg-gradient-to-br from-blue-50 via-white to-purple-50">
+      <div className="flex-1 bg-gray-50">
         <div className="container mx-auto px-4 py-8">
-          <h1 className="text-3xl font-bold mb-2">Contact Service</h1>
-          <p className="text-gray-600 mb-8">
-            Find contact information for service officers.
-          </p>
+          <div className="mb-8 p-8 rounded-2xl bg-gradient-to-br from-teal-700 to-emerald-900 text-white shadow-xl relative overflow-hidden">
+            <div className="absolute top-0 right-0 -mr-20 -mt-20 w-64 h-64 rounded-full bg-white opacity-10 blur-3xl"></div>
+            <div className="absolute bottom-0 left-0 -ml-20 -mb-20 w-80 h-80 rounded-full bg-teal-300 opacity-20 blur-3xl"></div>
+            <div className="relative z-10">
+              <h1 className="text-4xl font-extrabold mb-3 tracking-tight">Contact Service</h1>
+              <p className="text-teal-50 text-lg max-w-xl font-medium">
+                Find authentic department contacts and authoritative public sector directories seamlessly.
+              </p>
+            </div>
+          </div>
           {/* Status Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             <Card className="hover:shadow-lg transition-shadow">
@@ -207,7 +228,7 @@ export default function UserContactService() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-blue-600">
+                <div className="text-2xl font-bold text-teal-600">
                   {stats.active}
                 </div>
                 <p className="text-xs text-muted-foreground">
@@ -222,7 +243,7 @@ export default function UserContactService() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-purple-600">
+                <div className="text-2xl font-bold text-teal-600">
                   {stats.total}
                 </div>
                 <p className="text-xs text-muted-foreground">
@@ -275,7 +296,7 @@ export default function UserContactService() {
                       </div>
                       <div>
                         <span className="font-semibold">Status:</span>{" "}
-                        <span className="inline-block bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full text-xs font-semibold">
+                        <span className="inline-block bg-teal-100 text-teal-700 px-2 py-0.5 rounded-full text-xs font-semibold">
                           {service.status}
                         </span>
                       </div>
@@ -313,7 +334,7 @@ export default function UserContactService() {
                                 service.contacts?.map((contact) => ({
                                   officeName: contact.name, // Use the actual office name
                                   officeId: contact.id,
-                                  level: contact.designation, // Use designation which stores the correct level
+                                  level: inferOfficeLevel(contact),
                                   district: contact.district,
                                   subDistrict: contact.subDistrict,
                                   block: contact.block,
@@ -336,7 +357,7 @@ export default function UserContactService() {
                           setLoading(false);
                         }
                       }}
-                      className="w-full mt-2 bg-blue-600 text-white"
+                      className="w-full mt-2 bg-teal-600 text-white"
                       disabled={loading}
                     >
                       {loading ? "Loading..." : "View Details"}
@@ -367,7 +388,7 @@ export default function UserContactService() {
           {/* Modal for Contact Service Details */}
           {modalService && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
-              <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl shadow-2xl max-w-2xl w-full p-6 relative animate-fade-in overflow-y-auto max-h-[90vh] border border-blue-200">
+              <div className="bg-gray-50 rounded-xl shadow-2xl max-w-2xl w-full p-6 relative animate-fade-in overflow-y-auto max-h-[90vh] border border-teal-200">
                 <button
                   onClick={() => setModalService(null)}
                   className="absolute top-2 right-2 text-gray-400 hover:text-gray-700 text-2xl"
@@ -376,8 +397,8 @@ export default function UserContactService() {
                 </button>
                 <div className="mb-6">
                   <div className="flex items-center gap-2 mb-2">
-                    <div className="w-2 h-2 bg-blue-600 rounded-full"></div>
-                    <h2 className="text-2xl font-bold text-blue-800">
+                    <div className="w-2 h-2 bg-teal-600 rounded-full"></div>
+                    <h2 className="text-2xl font-bold text-teal-800">
                       {modalService.name}
                     </h2>
                   </div>
@@ -389,15 +410,15 @@ export default function UserContactService() {
                 {/* Basic Information */}
                 <div className="mb-6">
                   <div className="flex items-center gap-2 mb-3">
-                    <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
-                    <h3 className="text-lg font-semibold text-blue-800">
+                    <div className="w-2 h-2 bg-teal-400 rounded-full"></div>
+                    <h3 className="text-lg font-semibold text-teal-800">
                       Basic Information
                     </h3>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {/* Type */}
                     <div className="bg-white p-4 rounded-lg shadow-sm flex flex-col items-start justify-center min-h-[80px]">
-                      <span className="text-sm font-medium text-blue-700 mb-1">
+                      <span className="text-sm font-medium text-teal-700 mb-1">
                         Type
                       </span>
                       <span className="text-gray-800 text-base font-semibold">
@@ -406,7 +427,7 @@ export default function UserContactService() {
                     </div>
                     {/* Status */}
                     <div className="bg-white p-4 rounded-lg shadow-sm flex flex-col items-start justify-center min-h-[80px]">
-                      <span className="text-sm font-medium text-blue-700 mb-1">
+                      <span className="text-sm font-medium text-teal-700 mb-1">
                         Status
                       </span>
                       <span className="text-gray-800 text-base font-semibold capitalize">
@@ -419,7 +440,7 @@ export default function UserContactService() {
                     modalService.targetAudience.length > 0 && (
                       <div className="mt-4">
                         <div className="bg-white p-4 rounded-lg shadow-sm flex flex-col items-start justify-center min-h-[80px]">
-                          <span className="text-sm font-medium text-purple-700 mb-1">
+                          <span className="text-sm font-medium text-slate-700 mb-1">
                             Target Audience
                           </span>
                           <span className="text-gray-800 text-base font-semibold">
@@ -434,7 +455,7 @@ export default function UserContactService() {
                 {modalService.offices && (
                   <div className="mb-6">
                     <div className="flex items-center gap-2 mb-3">
-                      <div className="w-2 h-2 bg-indigo-500 rounded-full"></div>
+                      <div className="w-2 h-2 bg-teal-500 rounded-full"></div>
                       <h3 className="text-lg font-semibold text-gray-800">
                         Filter Options
                       </h3>
@@ -448,7 +469,7 @@ export default function UserContactService() {
                           }}
                           value={filterType}
                         >
-                          <SelectTrigger className="w-[180px] border-blue-200 focus:border-blue-400">
+                          <SelectTrigger className="w-full sm:w-[180px] border-teal-200 focus:border-teal-300">
                             <SelectValue placeholder="Select Filter Type" />
                           </SelectTrigger>
                           <SelectContent>
@@ -466,11 +487,17 @@ export default function UserContactService() {
                             }
                             value={selectedDistrict}
                           >
-                            <SelectTrigger className="w-[180px] border-blue-200 focus:border-blue-400">
+                            <SelectTrigger className="w-full sm:w-[180px] border-teal-200 focus:border-teal-300">
                               <SelectValue placeholder="Select District" />
                             </SelectTrigger>
                             <SelectContent>
-                              {tripuraDistricts.map((district) => (
+                              {Array.from(
+                                new Set(
+                                  modalService.offices
+                                    .map((office: any) => office.district)
+                                    .filter(Boolean),
+                                ),
+                              ).map((district) => (
                                 <SelectItem key={district} value={district}>
                                   {district}
                                 </SelectItem>
@@ -503,7 +530,10 @@ export default function UserContactService() {
                               return office.level === "District";
                             }
                             // If specific district selected, show offices in that district
-                            return office.district === selectedDistrict;
+                            return (
+                              office.level === "District" &&
+                              office.district === selectedDistrict
+                            );
                           }
                           // Default: show all offices
                           return true;
@@ -511,14 +541,14 @@ export default function UserContactService() {
                         .map((office: any, officeIdx: number) => (
                           <div
                             key={officeIdx}
-                            className="mb-4 p-4 border rounded-lg bg-gradient-to-r from-blue-50 to-blue-100 border-blue-200 shadow-sm hover:shadow-md transition-shadow duration-200"
+                            className="mb-4 p-4 border rounded-lg bg-gray-50 border-teal-200 shadow-sm hover:shadow-md transition-shadow duration-200"
                           >
-                            <h4 className="font-semibold text-lg mb-2 text-blue-800 flex items-center">
-                              <span className="w-2 h-2 bg-blue-400 rounded-full mr-2"></span>
+                            <h4 className="font-semibold text-lg mb-2 text-teal-800 flex items-center">
+                              <span className="w-2 h-2 bg-teal-400 rounded-full mr-2"></span>
                               Office: {office.officeName}
                             </h4>
-                            <div className="bg-white rounded-md p-3 mb-3 border-l-4 border-blue-300">
-                              <p className="text-sm text-blue-700">
+                            <div className="bg-white rounded-md p-3 mb-3 border-l-4 border-teal-300">
+                              <p className="text-sm text-teal-700">
                                 <span className="font-medium">Level:</span>{" "}
                                 {office.level},
                                 <span className="font-medium"> District:</span>{" "}
@@ -532,16 +562,16 @@ export default function UserContactService() {
 
                             {/* Posts within this office */}
                             <div className="mt-3">
-                              <h5 className="font-semibold text-md mb-2 text-blue-700 flex items-center">
-                                <span className="w-2 h-2 bg-blue-500 rounded-full mr-2"></span>
+                              <h5 className="font-semibold text-md mb-2 text-teal-700 flex items-center">
+                                <span className="w-2 h-2 bg-teal-500 rounded-full mr-2"></span>
                                 Posts:
                               </h5>
 
                               {modalService.posts &&
-                              modalService.posts.filter(
-                                (post: any) =>
-                                  post.officeId === office.officeId,
-                              ).length > 0 ? (
+                                modalService.posts.filter(
+                                  (post: any) =>
+                                    post.officeId === office.officeId,
+                                ).length > 0 ? (
                                 <ul className="space-y-3">
                                   {modalService.posts
                                     .filter(
@@ -551,27 +581,27 @@ export default function UserContactService() {
                                     .map((post: any, postIdx: number) => (
                                       <li
                                         key={postIdx}
-                                        className="bg-white rounded-lg p-3 border-l-4 border-blue-400 shadow-sm"
+                                        className="bg-white rounded-lg p-3 border-l-4 border-teal-300 shadow-sm"
                                       >
                                         <div className="flex items-center mb-2">
-                                          <span className="w-2 h-2 bg-blue-300 rounded-full mr-2"></span>
-                                          <span className="font-medium text-blue-800">
+                                          <span className="w-2 h-2 bg-teal-300 rounded-full mr-2"></span>
+                                          <span className="font-medium text-teal-800">
                                             {post.postName}
                                           </span>
-                                          <span className="ml-2 text-sm bg-blue-100 text-blue-700 px-2 py-1 rounded-full">
+                                          <span className="ml-2 text-sm bg-teal-100 text-teal-700 px-2 py-1 rounded-full">
                                             {post.postRank}
                                           </span>
                                         </div>
                                         {/* Employees within this post */}
                                         {modalService.employees &&
-                                        modalService.employees.filter(
-                                          (emp: any) =>
-                                            emp.postIndex ===
-                                            post.globalPostIndex,
-                                        ).length > 0 ? (
-                                          <div className="ml-4 mt-2 bg-gradient-to-r from-blue-50 to-blue-100 rounded-md p-3 border border-blue-200">
-                                            <h6 className="font-semibold text-sm mb-2 text-blue-700 flex items-center">
-                                              <span className="w-2 h-2 bg-blue-400 rounded-full mr-2"></span>
+                                          modalService.employees.filter(
+                                            (emp: any) =>
+                                              emp.postIndex ===
+                                              post.globalPostIndex,
+                                          ).length > 0 ? (
+                                          <div className="ml-4 mt-2 bg-gray-50 rounded-md p-3 border border-teal-200">
+                                            <h6 className="font-semibold text-sm mb-2 text-teal-700 flex items-center">
+                                              <span className="w-2 h-2 bg-teal-400 rounded-full mr-2"></span>
                                               Employees:
                                             </h6>
                                             <ul className="space-y-2">
@@ -588,21 +618,21 @@ export default function UserContactService() {
                                                   ) => (
                                                     <li
                                                       key={empIdx}
-                                                      className="bg-white rounded-md p-2 text-sm border border-blue-100"
+                                                      className="bg-white rounded-md p-2 text-sm border border-teal-100"
                                                     >
-                                                      <span className="font-medium text-blue-800">
+                                                      <span className="font-medium text-teal-800">
                                                         {emp.employeeName}
                                                       </span>
-                                                      <span className="ml-2 text-blue-600">
+                                                      <span className="ml-2 text-teal-600">
                                                         ({emp.designation})
                                                       </span>
                                                       {emp.email && (
-                                                        <div className="text-blue-500 text-xs mt-1">
+                                                        <div className="text-teal-600 text-xs mt-1">
                                                           📧 {emp.email}
                                                         </div>
                                                       )}
                                                       {emp.phone && (
-                                                        <div className="text-blue-400 text-xs">
+                                                        <div className="text-teal-400 text-xs">
                                                           📞 {emp.phone}
                                                         </div>
                                                       )}
@@ -612,7 +642,7 @@ export default function UserContactService() {
                                             </ul>
                                           </div>
                                         ) : (
-                                          <div className="ml-4 mt-2 text-sm text-blue-400 bg-blue-50 rounded-md p-2 border border-blue-100">
+                                          <div className="ml-4 mt-2 text-sm text-teal-400 bg-teal-50 rounded-md p-2 border border-teal-100">
                                             No employee details present
                                           </div>
                                         )}
@@ -620,8 +650,8 @@ export default function UserContactService() {
                                     ))}
                                 </ul>
                               ) : (
-                                <div className="bg-blue-50 rounded-md p-3 border border-blue-100">
-                                  <p className="text-sm text-blue-400 text-center">
+                                <div className="bg-teal-50 rounded-md p-3 border border-teal-100">
+                                  <p className="text-sm text-teal-400 text-center">
                                     No post details present
                                   </p>
                                 </div>
@@ -633,8 +663,27 @@ export default function UserContactService() {
                   </div>
                 )}
 
+                {/* PDF Download */}
+                {modalService.pdfUrl && (
+                  <div className="mb-6">
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                      <h3 className="text-lg font-semibold text-gray-800">Documents</h3>
+                    </div>
+                    <a
+                      href={modalService.pdfUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                      Download PDF
+                    </a>
+                  </div>
+                )}
+
                 {/* Record Information */}
-                <div className="pt-4 border-t border-purple-200">
+                <div className="pt-4 border-t border-slate-200">
                   <div className="flex items-center gap-2 mb-2">
                     <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
                     <h4 className="text-sm font-semibold text-gray-600">

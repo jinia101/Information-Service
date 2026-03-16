@@ -1,11 +1,21 @@
 import express, { Request, Response } from "express";
 import { body, validationResult, param } from "express-validator";
-import { PrismaClient } from "@prisma/client";
-import { authenticateAdmin } from "./adminAuth";
+import { prisma } from "../lib/prisma";
+import { queryCache } from "../lib/prisma";
+import { authenticateAdmin } from "../middleware/auth";
+import { readLimiter } from "../middleware/rateLimiter";
+import { pdfUpload, uploadPDFToOCI, deleteFromOCI } from "../lib/fileUpload";
 import "../types/express";
 
 const router = express.Router();
-const prisma = new PrismaClient();
+
+const getServiceAccessWhere = (admin: NonNullable<Request["admin"]>) => {
+  if (admin.role === "super_admin") return {};
+  if (admin.role === "department_admin" && admin.departmentId) {
+    return { departmentId: admin.departmentId };
+  }
+  return { adminId: admin.id };
+};
 
 // Create new scheme service (basic information)
 router.post(
@@ -66,11 +76,17 @@ router.post(
         return res.status(401).json({ error: "Authentication required" });
       }
 
+      const admin = req.admin;
+      const departmentId =
+        admin.role === "super_admin"
+          ? req.body.departmentId ?? null
+          : admin.departmentId ?? null;
+
       // Check if scheme service with same name exists
       const existingService = await prisma.schemeService.findFirst({
         where: {
           name: name,
-          adminId: req.admin.id,
+          adminId: admin.id,
         },
       });
 
@@ -97,7 +113,8 @@ router.post(
             applicationMode === "offline" || applicationMode === "both"
               ? offlineAddress
               : null,
-          adminId: req.admin.id,
+          adminId: admin.id,
+          departmentId,
           status: "draft",
           eligibilityDetails: [],
           schemeDetails: [],
@@ -129,7 +146,9 @@ router.get("/", authenticateAdmin, async (req: any, res) => {
     const { status, page = 1, limit = 10 } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    const where: any = { adminId: req.admin.id };
+    const where: any = {
+      ...getServiceAccessWhere(req.admin),
+    };
     if (status && ["draft", "pending", "published"].includes(status)) {
       where.status = status;
     }
@@ -160,7 +179,9 @@ router.get("/", authenticateAdmin, async (req: any, res) => {
     // Get statistics
     const stats = await prisma.schemeService.groupBy({
       by: ["status"],
-      where: { adminId: req.admin.id },
+      where: {
+        ...getServiceAccessWhere(req.admin),
+      },
       _count: {
         status: true,
       },
@@ -209,12 +230,11 @@ router.get(
       }
 
       const serviceId = parseInt(req.params.id);
-      console.log("Getting scheme service with ID:", serviceId);
 
       const schemeService = await prisma.schemeService.findFirst({
         where: {
           id: serviceId,
-          adminId: req.admin.id,
+          ...getServiceAccessWhere(req.admin),
         },
         include: {
           admin: {
@@ -225,14 +245,11 @@ router.get(
         },
       });
 
-      console.log("Found scheme service:", schemeService);
 
       if (!schemeService) {
-        console.log("Scheme service not found");
         return res.status(404).json({ error: "Scheme service not found" });
       }
 
-      console.log("Returning scheme service response");
       res.json({ schemeService });
     } catch (error) {
       console.error("Get scheme service error:", error);
@@ -294,7 +311,7 @@ router.put(
       const existingService = await prisma.schemeService.findFirst({
         where: {
           id: serviceId,
-          adminId: req.admin.id,
+          ...getServiceAccessWhere(req.admin),
         },
       });
 
@@ -455,7 +472,7 @@ router.patch(
       const existingService = await prisma.schemeService.findFirst({
         where: {
           id: serviceId,
-          adminId: req.admin.id,
+          ...getServiceAccessWhere(req.admin),
         },
         include: {
           contacts: true,
@@ -499,11 +516,17 @@ router.patch(
         });
       }
 
-      // Update status to published
+      // Determine publisher name for accountability
+      const publisherName =
+        req.admin!.role === "super_admin" ? "Admin" : req.admin!.name;
+
+      // Update status to published with publisher info
       const updatedService = await prisma.schemeService.update({
         where: { id: serviceId },
         data: {
           status: "published",
+          publishedBy: req.admin!.id,
+          publishedByName: publisherName,
           updatedAt: new Date(),
         },
         include: {
@@ -519,6 +542,9 @@ router.patch(
         message: "Scheme service published successfully",
         schemeService: updatedService,
       });
+
+      // Invalidate appropriate caches
+      await queryCache.invalidate("schemes:public");
     } catch (error) {
       console.error("Publish scheme service error:", error);
       res.status(500).json({ error: "Internal server error" });
@@ -553,7 +579,7 @@ router.patch(
       const existingService = await prisma.schemeService.findFirst({
         where: {
           id: serviceId,
-          adminId: req.admin.id,
+          ...getServiceAccessWhere(req.admin),
         },
       });
 
@@ -581,6 +607,9 @@ router.patch(
         message: `Scheme service ${isActive ? "activated" : "deactivated"} successfully`,
         schemeService: updatedService,
       });
+
+      // Invalidate public cache
+      await queryCache.invalidate("schemes:public");
     } catch (error) {
       console.error("Toggle scheme service active status error:", error);
       res.status(500).json({ error: "Internal server error" });
@@ -611,7 +640,7 @@ router.delete(
       const existingService = await prisma.schemeService.findFirst({
         where: {
           id: serviceId,
-          adminId: req.admin.id,
+          ...getServiceAccessWhere(req.admin),
         },
       });
 
@@ -624,6 +653,9 @@ router.delete(
         where: { id: serviceId },
       });
 
+      // Invalidate public cache
+      await queryCache.invalidate("schemes:public");
+
       res.json({ message: "Scheme service deleted successfully" });
     } catch (error) {
       console.error("Delete scheme service error:", error);
@@ -632,11 +664,76 @@ router.delete(
   },
 );
 
+// Upload PDF for scheme service
+router.post(
+  "/:id/upload-pdf",
+  authenticateAdmin,
+  param("id").isInt().withMessage("Invalid service ID"),
+  pdfUpload.single("pdf"),
+  async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+
+      if (!req.file) {
+        return res.status(400).json({ error: "No PDF file uploaded" });
+      }
+
+      const existingService = await prisma.schemeService.findFirst({
+        where: {
+          id,
+          ...getServiceAccessWhere(req.admin!),
+        },
+      });
+
+      if (!existingService) {
+        return res.status(404).json({ error: "Scheme service not found" });
+      }
+
+      // Delete old PDF from OCI if it exists
+      if (existingService.pdfUrl?.startsWith("https://")) {
+        await deleteFromOCI(existingService.pdfUrl);
+      }
+
+      const pdfUrl = await uploadPDFToOCI(req.file);
+
+      const updatedService = await prisma.schemeService.update({
+        where: { id },
+        data: { pdfUrl },
+        include: {
+          admin: { select: { id: true, name: true, email: true } },
+          contacts: true,
+          documents: true,
+        },
+      });
+
+      res.json({
+        message: "PDF uploaded successfully",
+        schemeService: updatedService,
+        pdfUrl,
+      });
+    } catch (error) {
+      console.error("Error uploading PDF:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+
 // Get public scheme services (for user dashboard)
-router.get("/public/list", async (req, res) => {
+router.get("/public/list", readLimiter, async (req, res) => {
   try {
     const { page = 1, limit = 10, search } = req.query;
-    const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
+    const limitNum = Math.min(parseInt(limit as string) || 10, 100);
+    const skip = (parseInt(page as string) - 1) * limitNum;
+
+    // Use cache for non-search queries
+    const cacheKey = search ? null : `schemes:public:${page}:${limitNum}`;
+    if (cacheKey) {
+      const cached = await queryCache.get<any>(cacheKey);
+      if (cached) {
+        res.set("Cache-Control", "public, max-age=60, s-maxage=120");
+        return res.json(cached);
+      }
+    }
 
     const where: any = { status: "published" };
 
@@ -668,20 +765,28 @@ router.get("/public/list", async (req, res) => {
         },
         orderBy: { updatedAt: "desc" },
         skip,
-        take: parseInt(limit as string),
+        take: limitNum,
       }),
       prisma.schemeService.count({ where }),
     ]);
 
-    res.json({
+    const result = {
       schemeServices,
       pagination: {
         page: parseInt(page as string),
-        limit: parseInt(limit as string),
+        limit: limitNum,
         total,
-        pages: Math.ceil(total / parseInt(limit as string)),
+        pages: Math.ceil(total / limitNum),
       },
-    });
+    };
+
+    // Cache non-search results for 2 minutes
+    if (cacheKey) {
+      await queryCache.set(cacheKey, result, 120_000);
+    }
+
+    res.set("Cache-Control", "public, max-age=60, s-maxage=120");
+    res.json(result);
   } catch (error) {
     console.error("Get public scheme services error:", error);
     res.status(500).json({ error: "Internal server error" });

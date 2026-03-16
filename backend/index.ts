@@ -1,11 +1,24 @@
+import dotenv from "dotenv";
+dotenv.config(); // Must be first — modules read env vars at import time
+
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
+import helmet from "helmet";
+import compression from "compression";
+import cookieParser from "cookie-parser";
 import path from "path";
-import { PrismaClient } from "@prisma/client";
+import { prisma, queryCache } from "./lib/prisma";
+
+// Import middleware
+import { globalLimiter, apiLimiter } from "./middleware/rateLimiter";
+import { errorHandler, sanitizeInput } from "./middleware/errorHandler";
 
 // Import routes
 import adminAuthRoutes from "./routes/adminAuth";
+import departmentRoutes from "./routes/departments";
+import adminManagementRoutes from "./routes/adminManagement";
+import auditLogRoutes from "./routes/auditLogs";
+import notificationRoutes from "./routes/notifications";
 import schemeServiceRoutes from "./routes/schemeService";
 import certificateServiceRoutes from "./routes/certificateService";
 import contactServiceRoutes from "./routes/contactService";
@@ -13,105 +26,206 @@ import officeManagementRoutes from "./routes/officeManagement";
 import feedbackRoutes from "./routes/feedback";
 import grievanceRoutes from "./routes/grievance";
 
-dotenv.config();
-
 const app = express();
-const prisma = new PrismaClient();
+
+// Trust the first proxy (Render load balancer) to ensure correct IP resolution for rate limiting
+app.set("trust proxy", 1);
+
 const PORT = process.env.PORT || 3001;
 
-// Middleware
+// ─── Performance: Response Compression ───
 app.use(
-  cors({
-    origin: [
-      process.env.FRONTEND_URL || "http://localhost:5173",
+  compression({
+    level: 6, // Balanced speed vs compression ratio
+    threshold: 1024, // Only compress responses > 1KB
+    filter: (req, res) => {
+      if (req.headers["x-no-compression"]) return false;
+      return compression.filter(req, res);
+    },
+  }),
+);
+
+// ─── Security Middleware ───
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+        imgSrc: ["'self'", "data:", "https:"],
+        fontSrc: ["'self'", "https://fonts.gstatic.com"],
+        connectSrc: ["'self'"],
+      },
+    },
+    crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    // Additional security headers
+    hsts: {
+      maxAge: 31536000,
+      includeSubDomains: true,
+      preload: true,
+    },
+    referrerPolicy: { policy: "strict-origin-when-cross-origin" },
+  }),
+);
+
+// ─── CORS Configuration ───
+const allowedOrigins = [
+  process.env.FRONTEND_URL || "http://localhost:5173",
+  ...(process.env.NODE_ENV !== "production"
+    ? [
+      "http://localhost:5173",
       "http://localhost:5174",
       "http://localhost:8080",
       "http://localhost:8081",
       "http://localhost:3000",
-    ],
+    ]
+    : []),
+].map(o => o.replace(/\/$/, "")).filter(Boolean);
+
+const allowedOriginsSet = new Set(allowedOrigins);
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow server-to-server requests (no origin) e.g. health checks, self-ping
+      if (!origin) {
+        return callback(null, true);
+      }
+      if (allowedOriginsSet.has(origin.replace(/\/$/, ""))) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
     credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    maxAge: 86400, // Pre-flight cache: 24 hours
   }),
 );
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
-// Request logging middleware
-app.use((req, res, next) => {
-  console.log(`${req.method} ${req.path}`);
-  console.log("Headers:", req.headers);
-  console.log("Body:", req.body);
-  next();
-});
+// ─── Body Parsing (with size limits for security) ───
+app.use(express.json({ limit: "500kb" }));
+app.use(express.urlencoded({ extended: true, limit: "500kb" }));
+app.use(cookieParser());
 
-// Routes
+// ─── Rate Limiting ───
+app.use("/api/", globalLimiter);
+
+// ─── Input Sanitization ───
+app.use(sanitizeInput);
+
+// ─── Performance: ETag support for conditional requests ───
+app.set("etag", "strong");
+
+// ─── Request Logging (Development Only) ───
+if (process.env.NODE_ENV === "development") {
+  app.use((req, _res, next) => {
+    console.log(`${req.method} ${req.path}`);
+    next();
+  });
+}
+
+// ─── API Routes ───
 app.use("/api/auth", adminAuthRoutes);
+app.use("/api/departments", departmentRoutes);
+app.use("/api/admin", adminManagementRoutes);
+app.use("/api/audit-logs", auditLogRoutes);
+app.use("/api/notifications", notificationRoutes);
 app.use("/api/scheme-services", schemeServiceRoutes);
 app.use("/api/certificate-services", certificateServiceRoutes);
 app.use("/api/contact-services", contactServiceRoutes);
 app.use("/api/offices", officeManagementRoutes);
 app.use("/api/feedbacks", feedbackRoutes);
 app.use("/api/grievances", grievanceRoutes);
-app.use("/api/feedbacks", feedbackRoutes);
-app.use("/api/grievances", grievanceRoutes);
 
-app.get("/api/test", (req, res) => {
-  res.json({ status: "OK", message: "Test route working" });
+// ─── Health Check (with cache headers) ───
+app.get("/api/health", (_req, res) => {
+  res.set("Cache-Control", "no-cache");
+  res.json({ status: "OK", message: "Server is running", timestamp: new Date().toISOString() });
 });
 
-// Health check
-app.get("/api/health", (req, res) => {
-  res.json({ status: "OK", message: "Server is running" });
-});
+// ─── Serve Uploads (PDFs and images) ───
+const uploadsPath = path.join(__dirname, "uploads");
+app.use("/uploads", express.static(uploadsPath, {
+  maxAge: "7d",
+  etag: true,
+}));
 
-// Serve static files from the React app build directory
+// ─── Serve Frontend ───
 const clientBuildPath = path.join(__dirname, "../dist/spa");
-app.use(express.static(clientBuildPath));
+app.use(express.static(clientBuildPath, {
+  maxAge: "1y",
+  immutable: true,
+  etag: true,
+}));
 
-// Error handling middleware
-app.use(
-  (
-    err: any,
-    req: express.Request,
-    res: express.Response,
-    next: express.NextFunction,
-  ) => {
-    console.error(err.stack);
-    res.status(500).json({
-      error: "Something went wrong!",
-      message:
-        process.env.NODE_ENV === "development"
-          ? err.message
-          : "Internal server error",
-    });
-  },
-);
+// ─── Error Handling ───
+app.use(errorHandler);
 
-// Catch-all handler: send back React's index.html file for any non-API routes
+// ─── SPA Catch-all ───
 app.get("*", (req, res) => {
-  // Don't serve index.html for API routes
   if (req.path.startsWith("/api/")) {
-    res.status(404).json({ error: "API route not found" });
-    return;
+    return res.status(404).json({ error: "API route not found" });
   }
 
   const indexPath = path.join(clientBuildPath, "index.html");
   res.sendFile(indexPath, (err) => {
     if (err) {
-      console.error("Error serving index.html:", err);
       res.status(500).json({ error: "Failed to serve application" });
     }
   });
 });
 
-// Graceful shutdown
-process.on("SIGINT", async () => {
-  console.log("Shutting down gracefully...");
+// ─── Graceful Shutdown ───
+const gracefulShutdown = async (signal: string) => {
+  console.log(`${signal} received, shutting down gracefully...`);
+  queryCache.destroy();
   await prisma.$disconnect();
   process.exit(0);
-});
+};
+
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+
+// ─── Periodic Session Cleanup (every 6 hours) ───
+setInterval(async () => {
+  try {
+    await prisma.session.deleteMany({
+      where: {
+        OR: [
+          { expiresAt: { lt: new Date() } },
+          { isActive: false },
+        ],
+      },
+    });
+  } catch (e) {
+    console.error("Session cleanup error:", e);
+  }
+}, 6 * 60 * 60 * 1000);
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
+  console.log(`Environment: ${process.env.NODE_ENV || "development"}`);
+
+  // ─── Keep-Alive: Prevent Render free tier from spinning down ───
+  if (process.env.RENDER_EXTERNAL_URL || process.env.NODE_ENV === "production") {
+    const keepAliveUrl = `${process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`}/api/health`;
+    const KEEP_ALIVE_INTERVAL = 14 * 60 * 1000; // 14 minutes (Render spins down after 15 min)
+
+    setInterval(async () => {
+      try {
+        const res = await fetch(keepAliveUrl);
+        console.log(`[Keep-Alive] Pinged ${keepAliveUrl} — Status: ${res.status}`);
+      } catch (err) {
+        console.error("[Keep-Alive] Ping failed:", err);
+      }
+    }, KEEP_ALIVE_INTERVAL);
+
+    console.log(`[Keep-Alive] Self-ping enabled every 14 min → ${keepAliveUrl}`);
+  }
 });
 
 export { prisma };

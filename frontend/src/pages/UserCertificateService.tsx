@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   Card,
   CardHeader,
@@ -43,15 +43,20 @@ export default function UserCertificateService() {
   >([]);
   const [loading, setLoading] = useState(false);
 
-  const filteredApiCerts = apiCertificateServices.filter((s) =>
-    s.name.toLowerCase().includes(search.toLowerCase()),
-  );
+  // ⚡ Bolt: Memoize filtered services
+  const filteredApiCerts = useMemo(() => {
+    const lowerSearch = search.toLowerCase();
+    return apiCertificateServices.filter((s) =>
+      s.name.toLowerCase().includes(lowerSearch),
+    );
+  }, [apiCertificateServices, search]);
 
-  const stats = {
+  // ⚡ Bolt: Memoize stats separately
+  const stats = useMemo(() => ({
     published: apiCertificateServices.length,
-    active: apiCertificateServices.length, // All services in apiCertificateServices are active (published and isActive !== false)
+    active: apiCertificateServices.length,
     total: apiCertificateServices.length,
-  };
+  }), [apiCertificateServices]);
 
   useEffect(() => {
     fetchApiCertificateServices();
@@ -60,12 +65,8 @@ export default function UserCertificateService() {
   const fetchApiCertificateServices = async () => {
     setLoading(true);
     try {
-      const response = await apiClient.getCertificateServices();
-      const activeServices = (response.certificateServices || []).filter(
-        (service) =>
-          service.status === "published" && service.isActive !== false,
-      );
-      setApiCertificateServices(activeServices);
+      const response = await apiClient.getPublicCertificateServices();
+      setApiCertificateServices(response.certificateServices || []);
     } catch (error) {
       console.error("Error fetching certificate services:", error);
     } finally {
@@ -81,14 +82,20 @@ export default function UserCertificateService() {
   }, [modalCert]);
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex flex-col md:flex-row min-h-screen">
       <ServicesMenu />
-      <div className="flex-1 bg-gradient-to-br from-blue-50 via-white to-purple-50">
+      <div className="flex-1 bg-gray-50">
         <div className="container mx-auto px-4 py-8">
-          <h1 className="text-3xl font-bold mb-2">Certificates</h1>
-          <p className="text-gray-600 mb-8">
-            Browse available certificates and view details.
-          </p>
+          <div className="mb-8 p-8 rounded-2xl bg-gradient-to-br from-teal-700 to-emerald-900 text-white shadow-xl relative overflow-hidden">
+            <div className="absolute top-0 right-0 -mr-20 -mt-20 w-64 h-64 rounded-full bg-white opacity-10 blur-3xl"></div>
+            <div className="absolute bottom-0 left-0 -ml-20 -mb-20 w-80 h-80 rounded-full bg-teal-300 opacity-20 blur-3xl"></div>
+            <div className="relative z-10">
+              <h1 className="text-4xl font-extrabold mb-3 tracking-tight">Certificates</h1>
+              <p className="text-teal-50 text-lg max-w-xl font-medium">
+                Browse available certificates, view details, and track application requirements.
+              </p>
+            </div>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             <Card className="hover:shadow-lg transition-shadow">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -112,7 +119,7 @@ export default function UserCertificateService() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-blue-600">
+                <div className="text-2xl font-bold text-teal-600">
                   {stats.active}
                 </div>
                 <p className="text-xs text-muted-foreground">
@@ -127,7 +134,7 @@ export default function UserCertificateService() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-purple-600">
+                <div className="text-2xl font-bold text-teal-600">
                   {stats.total}
                 </div>
                 <p className="text-xs text-muted-foreground">
@@ -173,8 +180,8 @@ export default function UserCertificateService() {
                         {cert.applicationMode === "both"
                           ? "Online/Offline"
                           : cert.applicationMode === "online"
-                          ? "Online"
-                          : "Offline"}
+                            ? "Online"
+                            : "Offline"}
                       </div>
                       {cert.targetAudience &&
                         cert.targetAudience.length > 0 && (
@@ -192,7 +199,7 @@ export default function UserCertificateService() {
                             href={cert.onlineUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-blue-600 hover:underline"
+                            className="text-teal-600 hover:underline"
                           >
                             Apply Online
                           </a>
@@ -347,7 +354,7 @@ export default function UserCertificateService() {
                               cert.contacts?.filter(
                                 (contact) =>
                                   contact.applicationType ===
-                                    "New Application" ||
+                                  "New Application" ||
                                   !contact.applicationType,
                               ) || [],
                             "Update Application":
@@ -371,7 +378,7 @@ export default function UserCertificateService() {
                           },
                         })
                       }
-                      className="w-full mt-2 bg-blue-600 text-white"
+                      className="w-full mt-2 bg-teal-600 text-white"
                     >
                       View Details
                     </Button>
@@ -399,7 +406,7 @@ export default function UserCertificateService() {
           {/* Modal for Certificate Details */}
           {modalCert && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
-              <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg shadow-xl max-w-4xl w-full p-6 relative animate-fade-in overflow-y-auto max-h-[90vh] border border-blue-200">
+              <div className="bg-gray-50 rounded-lg shadow-xl max-w-4xl w-full p-6 relative animate-fade-in overflow-y-auto max-h-[90vh] border border-teal-200">
                 <button
                   onClick={() => setModalCert(null)}
                   className="absolute top-2 right-2 text-gray-400 hover:text-gray-700 text-2xl"
@@ -408,8 +415,8 @@ export default function UserCertificateService() {
                 </button>
                 <div className="mb-6">
                   <div className="flex items-center gap-2 mb-2">
-                    <div className="w-2 h-2 bg-blue-600 rounded-full"></div>
-                    <h2 className="text-2xl font-bold text-blue-800">
+                    <div className="w-2 h-2 bg-teal-600 rounded-full"></div>
+                    <h2 className="text-2xl font-bold text-teal-800">
                       {modalCert.name}
                     </h2>
                   </div>
@@ -421,15 +428,15 @@ export default function UserCertificateService() {
                 {/* Basic Information */}
                 <div className="mb-6">
                   <div className="flex items-center gap-2 mb-3">
-                    <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
-                    <h3 className="text-lg font-semibold text-blue-800">
+                    <div className="w-2 h-2 bg-teal-400 rounded-full"></div>
+                    <h3 className="text-lg font-semibold text-teal-800">
                       Basic Information
                     </h3>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {/* Type */}
                     <div className="bg-white p-4 rounded-lg shadow-sm flex flex-col items-start justify-center min-h-[80px]">
-                      <span className="text-sm font-medium text-blue-700 mb-1">
+                      <span className="text-sm font-medium text-teal-700 mb-1">
                         Type
                       </span>
                       <span className="text-gray-800 text-base font-semibold">
@@ -438,7 +445,7 @@ export default function UserCertificateService() {
                     </div>
                     {/* Status */}
                     <div className="bg-white p-4 rounded-lg shadow-sm flex flex-col items-start justify-center min-h-[80px]">
-                      <span className="text-sm font-medium text-blue-700 mb-1">
+                      <span className="text-sm font-medium text-teal-700 mb-1">
                         Status
                       </span>
                       <span className="text-gray-800 text-base font-semibold capitalize">
@@ -449,21 +456,21 @@ export default function UserCertificateService() {
                   {/* Application Mode & Target Audience below */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
                     <div className="bg-white p-4 rounded-lg shadow-sm flex flex-col items-start justify-center min-h-[80px]">
-                      <span className="text-sm font-medium text-blue-700 mb-1">
+                      <span className="text-sm font-medium text-teal-700 mb-1">
                         Application Mode
                       </span>
                       <span className="text-gray-800 text-base font-semibold">
                         {modalCert.applicationMode === "both"
                           ? "Online/Offline"
                           : modalCert.applicationMode === "online"
-                          ? "Online"
-                          : "Offline"}
+                            ? "Online"
+                            : "Offline"}
                       </span>
                     </div>
                     {modalCert.targetAudience &&
                       modalCert.targetAudience.length > 0 && (
                         <div className="bg-white p-4 rounded-lg shadow-sm flex flex-col items-start justify-center min-h-[80px]">
-                          <span className="text-sm font-medium text-purple-700 mb-1">
+                          <span className="text-sm font-medium text-slate-700 mb-1">
                             Target Audience
                           </span>
                           <span className="text-gray-800 text-base font-semibold">
@@ -478,7 +485,7 @@ export default function UserCertificateService() {
                 {(modalCert.onlineUrl || modalCert.offlineAddress) && (
                   <div className="mb-6">
                     <div className="flex items-center gap-2 mb-3">
-                      <div className="w-2 h-2 bg-indigo-500 rounded-full"></div>
+                      <div className="w-2 h-2 bg-teal-500 rounded-full"></div>
                       <h3 className="text-lg font-semibold text-gray-800">
                         How to Apply
                       </h3>
@@ -486,14 +493,14 @@ export default function UserCertificateService() {
                     <div className="bg-white p-4 rounded-lg shadow-sm">
                       {modalCert.onlineUrl && (
                         <div className="mb-2">
-                          <span className="font-medium text-indigo-700">
+                          <span className="font-medium text-teal-700">
                             Online:
                           </span>{" "}
                           <a
                             href={modalCert.onlineUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-blue-600 hover:underline"
+                            className="text-teal-600 hover:underline"
                           >
                             {modalCert.onlineUrl}
                           </a>
@@ -501,7 +508,7 @@ export default function UserCertificateService() {
                       )}
                       {modalCert.offlineAddress && (
                         <div>
-                          <span className="font-medium text-indigo-700">
+                          <span className="font-medium text-teal-700">
                             Offline:
                           </span>{" "}
                           <span className="text-gray-700">
@@ -649,14 +656,14 @@ export default function UserCertificateService() {
                         (contactItem: any, idx: number) => (
                           <div
                             key={idx}
-                            className="bg-blue-50 border border-blue-200 rounded-xl p-6 mb-4"
+                            className="bg-teal-50 border border-teal-200 rounded-xl p-6 mb-4"
                           >
-                            <h4 className="text-blue-700 text-lg font-semibold mb-4">
+                            <h4 className="text-teal-700 text-lg font-semibold mb-4">
                               Contact Person {idx + 1}
                             </h4>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2">
                               <div>
-                                <span className="font-semibold text-blue-700">
+                                <span className="font-semibold text-teal-700">
                                   Service Name:
                                 </span>{" "}
                                 <span className="text-gray-800">
@@ -664,7 +671,7 @@ export default function UserCertificateService() {
                                 </span>
                               </div>
                               <div>
-                                <span className="font-semibold text-blue-700">
+                                <span className="font-semibold text-teal-700">
                                   District:
                                 </span>{" "}
                                 <span className="text-gray-800">
@@ -672,7 +679,7 @@ export default function UserCertificateService() {
                                 </span>
                               </div>
                               <div>
-                                <span className="font-semibold text-blue-700">
+                                <span className="font-semibold text-teal-700">
                                   Sub District:
                                 </span>{" "}
                                 <span className="text-gray-800">
@@ -680,7 +687,7 @@ export default function UserCertificateService() {
                                 </span>
                               </div>
                               <div>
-                                <span className="font-semibold text-blue-700">
+                                <span className="font-semibold text-teal-700">
                                   Block:
                                 </span>{" "}
                                 <span className="text-gray-800">
@@ -688,7 +695,7 @@ export default function UserCertificateService() {
                                 </span>
                               </div>
                               <div>
-                                <span className="font-semibold text-blue-700">
+                                <span className="font-semibold text-teal-700">
                                   Name:
                                 </span>{" "}
                                 <span className="text-gray-800">
@@ -696,7 +703,7 @@ export default function UserCertificateService() {
                                 </span>
                               </div>
                               <div>
-                                <span className="font-semibold text-blue-700">
+                                <span className="font-semibold text-teal-700">
                                   Designation:
                                 </span>{" "}
                                 <span className="text-gray-800">
@@ -704,7 +711,7 @@ export default function UserCertificateService() {
                                 </span>
                               </div>
                               <div>
-                                <span className="font-semibold text-blue-700">
+                                <span className="font-semibold text-teal-700">
                                   Contact:
                                 </span>{" "}
                                 <span className="text-gray-800">
@@ -712,7 +719,7 @@ export default function UserCertificateService() {
                                 </span>
                               </div>
                               <div>
-                                <span className="font-semibold text-blue-700">
+                                <span className="font-semibold text-teal-700">
                                   Email:
                                 </span>{" "}
                                 <span className="text-gray-800">
@@ -783,58 +790,58 @@ export default function UserCertificateService() {
 
                     <div className="mb-6">
                       <div className="flex items-center gap-2 mb-3">
-                        <div className="w-2 h-2 bg-indigo-500 rounded-full"></div>
+                        <div className="w-2 h-2 bg-teal-500 rounded-full"></div>
                         <h3 className="text-lg font-semibold text-gray-800">
                           Contact Person
                         </h3>
                       </div>
                       {modalCert.contact && (
-                        <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-indigo-400">
+                        <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-teal-400">
                           <ul className="space-y-2">
                             <li className="text-gray-700">
-                              <span className="font-medium text-indigo-600">
+                              <span className="font-medium text-teal-600">
                                 Service Name:
                               </span>{" "}
                               {modalCert.contact.serviceName}
                             </li>
                             <li className="text-gray-700">
-                              <span className="font-medium text-indigo-600">
+                              <span className="font-medium text-teal-600">
                                 District:
                               </span>{" "}
                               {modalCert.contact.district}
                             </li>
                             <li className="text-gray-700">
-                              <span className="font-medium text-indigo-600">
+                              <span className="font-medium text-teal-600">
                                 Sub District:
                               </span>{" "}
                               {modalCert.contact.subDistrict}
                             </li>
                             <li className="text-gray-700">
-                              <span className="font-medium text-indigo-600">
+                              <span className="font-medium text-teal-600">
                                 Block:
                               </span>{" "}
                               {modalCert.contact.block}
                             </li>
                             <li className="text-gray-700">
-                              <span className="font-medium text-indigo-600">
+                              <span className="font-medium text-teal-600">
                                 Name:
                               </span>{" "}
                               {modalCert.contact.name}
                             </li>
                             <li className="text-gray-700">
-                              <span className="font-medium text-indigo-600">
+                              <span className="font-medium text-teal-600">
                                 Designation:
                               </span>{" "}
                               {modalCert.contact.designation}
                             </li>
                             <li className="text-gray-700">
-                              <span className="font-medium text-indigo-600">
+                              <span className="font-medium text-teal-600">
                                 Contact:
                               </span>{" "}
                               {modalCert.contact.contact}
                             </li>
                             <li className="text-gray-700">
-                              <span className="font-medium text-indigo-600">
+                              <span className="font-medium text-teal-600">
                                 Email:
                               </span>{" "}
                               {modalCert.contact.email}
@@ -860,7 +867,7 @@ export default function UserCertificateService() {
 
                     <div className="mb-6">
                       <div className="flex items-center gap-2 mb-3">
-                        <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
+                        <div className="w-2 h-2 bg-slate-500 rounded-full"></div>
                         <h3 className="text-lg font-semibold text-gray-800">
                           Status
                         </h3>
@@ -911,8 +918,27 @@ export default function UserCertificateService() {
                   </>
                 )}
 
+                {/* PDF Download */}
+                {modalCert.pdfUrl && (
+                  <div className="mb-6">
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                      <h3 className="text-lg font-semibold text-gray-800">Documents</h3>
+                    </div>
+                    <a
+                      href={modalCert.pdfUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                      Download PDF
+                    </a>
+                  </div>
+                )}
+
                 {/* Timestamps */}
-                <div className="pt-4 border-t border-purple-200">
+                <div className="pt-4 border-t border-slate-200">
                   <div className="flex items-center gap-2 mb-2">
                     <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
                     <h4 className="text-sm font-semibold text-gray-600">

@@ -73,15 +73,12 @@ export default function EditSchemeService() {
 
       setLoading(true);
       try {
-        console.log("Fetching scheme service with ID:", id);
         const response = await apiClient.getSchemeService(parseInt(id));
-        console.log("API response:", response);
 
         // The response is the JSON directly, not wrapped in data
         const scheme = response.schemeService;
-        console.log("Extracted scheme:", scheme);
 
-        setSchemeService(scheme);
+        setSchemeService(scheme ?? null);
 
         // Populate basic fields
         if (scheme?.name) setName(scheme.name);
@@ -120,18 +117,18 @@ export default function EditSchemeService() {
     };
   }, []);
 
-  const handleAdd = (setter, arr) => {
+  const handleAdd = (setter: React.Dispatch<React.SetStateAction<string[]>>, arr: string[]) => {
     setter([...arr, ""]);
     autoSave();
   };
 
-  const handleChange = (setter, arr, idx, value) => {
-    setter(arr.map((v, i) => (i === idx ? value : v)));
+  const handleChange = (setter: React.Dispatch<React.SetStateAction<string[]>>, arr: string[], idx: number, value: string) => {
+    setter(arr.map((v: string, i: number) => (i === idx ? value : v)));
     autoSave();
   };
 
-  const handleRemove = (setter, arr, idx) => {
-    setter(arr.filter((_, i) => i !== idx));
+  const handleRemove = (setter: React.Dispatch<React.SetStateAction<string[]>>, arr: string[], idx: number) => {
+    setter(arr.filter((_: string, i: number) => i !== idx));
     autoSave();
   };
 
@@ -261,7 +258,7 @@ export default function EditSchemeService() {
     }
   };
 
-  const handleContactChange = (idx, e) => {
+  const handleContactChange = (idx: number, e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setContacts(
       contacts.map((contact, i) =>
@@ -286,8 +283,8 @@ export default function EditSchemeService() {
     ]);
   };
 
-  const removeContact = (idx) => {
-    setContacts(contacts.filter((_, i) => i !== idx));
+  const removeContact = (idx: number) => {
+    setContacts(contacts.filter((_: any, i: number) => i !== idx));
   };
 
   const renderStep = () => {
@@ -504,7 +501,7 @@ export default function EditSchemeService() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
+    <div className="min-h-screen bg-gray-50">
       <div className="container mx-auto px-4 py-8">
         <h1 className="text-3xl font-bold mb-6">
           Edit Scheme: {schemeService?.name || "Loading..."}
@@ -532,7 +529,7 @@ export default function EditSchemeService() {
 
         {schemeService && (
           <div className="flex flex-col items-center justify-center">
-            <div className="grid grid-cols-2 gap-4 place-content-center bg-white p-6 rounded-lg shadow-md">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 place-content-center bg-white p-6 rounded-lg shadow-md">
               <div className="border p-4 mb-6 rounded-md bg-white shadow-md">
                 <Card>
                   <CardHeader>
@@ -724,25 +721,25 @@ export default function EditSchemeService() {
                 <div className="mb-4 flex items-center justify-center space-x-4">
                   <button
                     onClick={() => setStep(1)}
-                    className={`px-4 py-2 rounded-md flex items-center justify-center ${step === 1 ? "bg-blue-500 text-white" : "bg-gray-300"}`}
+                    className={`px-4 py-2 rounded-md flex items-center justify-center ${step === 1 ? "bg-teal-500 text-white" : "bg-gray-300"}`}
                   >
                     Eligibility
                   </button>
                   <button
                     onClick={() => setStep(2)}
-                    className={`px-4 py-2 rounded-md flex items-center justify-center ${step === 2 ? "bg-blue-500 text-white" : "bg-gray-300"}`}
+                    className={`px-4 py-2 rounded-md flex items-center justify-center ${step === 2 ? "bg-teal-500 text-white" : "bg-gray-300"}`}
                   >
                     Scheme Details
                   </button>
                   <button
                     onClick={() => setStep(3)}
-                    className={`px-4 py-2 rounded-md flex items-center justify-center ${step === 3 ? "bg-blue-500 text-white" : "bg-gray-300"}`}
+                    className={`px-4 py-2 rounded-md flex items-center justify-center ${step === 3 ? "bg-teal-500 text-white" : "bg-gray-300"}`}
                   >
                     Application Process
                   </button>
                   <button
                     onClick={() => setStep(4)}
-                    className={`px-4 py-2 rounded-md flex items-center justify-center ${step === 4 ? "bg-blue-500 text-white" : "bg-gray-300"}`}
+                    className={`px-4 py-2 rounded-md flex items-center justify-center ${step === 4 ? "bg-teal-500 text-white" : "bg-gray-300"}`}
                   >
                     Contact Service
                   </button>

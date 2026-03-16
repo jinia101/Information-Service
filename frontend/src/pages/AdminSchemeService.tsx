@@ -8,13 +8,14 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { Plus, CheckCircle, Activity, Clock, Users } from "lucide-react";
+import { Plus, CheckCircle, Activity, Clock, Users, Upload, FileText } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { apiClient } from "../types/api";
 import type { SchemeService } from "../types/api";
 import { useAuth } from "../contexts/AuthContext";
+import { toast } from "../hooks/use-toast";
 
 export default function AdminSchemeService() {
   const [searchParams] = useSearchParams();
@@ -26,6 +27,9 @@ export default function AdminSchemeService() {
   const [error, setError] = useState("");
   const [deletingIds, setDeletingIds] = useState<Set<number>>(new Set());
   const [togglingIds, setTogglingIds] = useState<Set<number>>(new Set());
+  const [uploadingIds, setUploadingIds] = useState<Set<number>>(new Set());
+  const pdfInputRef = useRef<HTMLInputElement>(null);
+  const [uploadTargetId, setUploadTargetId] = useState<number | null>(null);
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
 
@@ -108,9 +112,9 @@ export default function AdminSchemeService() {
   };
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex flex-col md:flex-row min-h-screen">
       <AdminSidebar />
-      <div className="flex-1 bg-gradient-to-br from-blue-50 via-white to-purple-50">
+      <div className="flex-1 bg-gray-50">
         <div className="container mx-auto px-4 py-8">
           <h1 className="text-3xl font-bold mb-2">Scheme Service</h1>
           <p className="text-gray-600 mb-8">
@@ -154,10 +158,10 @@ export default function AdminSchemeService() {
                     <CardTitle className="text-sm font-medium">
                       Active Services
                     </CardTitle>
-                    <Activity className="h-4 w-4 text-blue-600" />
+                    <Activity className="h-4 w-4 text-teal-600" />
                   </CardHeader>
                   <CardContent>
-                    <div className="text-2xl font-bold text-blue-600">
+                    <div className="text-2xl font-bold text-teal-600">
                       {stats.active}
                     </div>
                     <p className="text-xs text-muted-foreground">
@@ -188,10 +192,10 @@ export default function AdminSchemeService() {
                     <CardTitle className="text-sm font-medium">
                       Inactive Services
                     </CardTitle>
-                    <Users className="h-4 w-4 text-purple-600" />
+                    <Users className="h-4 w-4 text-teal-600" />
                   </CardHeader>
                   <CardContent>
-                    <div className="text-2xl font-bold text-purple-600">
+                    <div className="text-2xl font-bold text-teal-600">
                       {stats.inactive}
                     </div>
                     <p className="text-xs text-muted-foreground">
@@ -299,7 +303,7 @@ export default function AdminSchemeService() {
                                     <span className="px-2 py-1 bg-orange-100 text-orange-800 text-xs rounded">
                                       {scheme.status}
                                     </span>
-                                    <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded">
+                                    <span className="px-2 py-1 bg-teal-100 text-teal-800 text-xs rounded">
                                       {scheme.type}
                                     </span>
                                   </div>
@@ -358,6 +362,28 @@ export default function AdminSchemeService() {
                         </div>
                       ) : (
                         <div className="space-y-4">
+                          <input
+                            type="file"
+                            accept=".pdf"
+                            ref={pdfInputRef}
+                            className="hidden"
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (!file || uploadTargetId === null) return;
+                              setUploadingIds((prev) => new Set(prev).add(uploadTargetId));
+                              try {
+                                const res = await apiClient.uploadServicePdf("scheme-services", uploadTargetId, file);
+                                setSchemes((prev) => prev.map((s) => s.id === uploadTargetId ? { ...s, pdfUrl: res.pdfUrl } : s));
+                                toast({ title: "PDF uploaded successfully" });
+                              } catch (err: any) {
+                                toast({ title: "Upload failed", description: err?.message, variant: "destructive" });
+                              } finally {
+                                setUploadingIds((prev) => { const n = new Set(prev); n.delete(uploadTargetId); return n; });
+                                setUploadTargetId(null);
+                                e.target.value = "";
+                              }
+                            }}
+                          />
                           {publishedSchemes.map((scheme) => (
                             <Card key={scheme.id} className="p-4">
                               <div className="flex justify-between items-start">
@@ -368,11 +394,11 @@ export default function AdminSchemeService() {
                                   <p className="text-gray-600 text-sm">
                                     {scheme.summary}
                                   </p>
-                                  <div className="flex gap-2 mt-2">
+                                  <div className="flex flex-wrap gap-2 mt-2">
                                     <span className="px-2 py-1 bg-green-100 text-green-800 text-xs rounded">
                                       {scheme.status}
                                     </span>
-                                    <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded">
+                                    <span className="px-2 py-1 bg-teal-100 text-teal-800 text-xs rounded">
                                       {scheme.type}
                                     </span>
                                     <span
@@ -386,6 +412,16 @@ export default function AdminSchemeService() {
                                         ? "Active"
                                         : "Inactive"}
                                     </span>
+                                    {scheme.publishedByName && (
+                                      <span className="px-2 py-1 bg-purple-100 text-purple-800 text-xs rounded">
+                                        Published by: {scheme.publishedByName}
+                                      </span>
+                                    )}
+                                    {scheme.pdfUrl && (
+                                      <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded flex items-center gap-1">
+                                        <FileText className="h-3 w-3" /> PDF attached
+                                      </span>
+                                    )}
                                   </div>
                                 </div>
                                 <div className="flex gap-2">
@@ -408,6 +444,21 @@ export default function AdminSchemeService() {
                                       "Deactivate"
                                     ) : (
                                       "Activate"
+                                    )}
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => {
+                                      setUploadTargetId(scheme.id);
+                                      pdfInputRef.current?.click();
+                                    }}
+                                    disabled={uploadingIds.has(scheme.id)}
+                                  >
+                                    {uploadingIds.has(scheme.id) ? (
+                                      <LoadingSpinner size="sm" variant="inline" />
+                                    ) : (
+                                      <><Upload className="h-4 w-4 mr-1" /> PDF</>
                                     )}
                                   </Button>
                                   <Button
